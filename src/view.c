@@ -861,13 +861,20 @@ adjust_floating_geometry(struct view *view, struct wlr_box *geometry,
 	}
 
 	bool adjusted = false;
-	bool onscreen = false;
 	if (wlr_output_layout_intersects(server.output_layout,
 			view->output->wlr_output, geometry)) {
-		/* Always make sure the titlebar starts within the usable area */
+		/*
+		 * Keep intersecting floating windows on their chosen output.
+		 * Falling back to placement policy here can make a near-dock or
+		 * near-edge window jump back to the center when usable-area
+		 * reservations change. Clamp only the minimum amount needed to
+		 * keep the decorated window reachable.
+		 */
 		struct border margin = ssd_get_margin(view->ssd);
 		struct wlr_box usable =
 			output_usable_area_in_layout_coords(view->output);
+		int usable_right = usable.x + usable.width;
+		int usable_bottom = usable.y + usable.height;
 
 		if (geometry->x < usable.x + margin.left) {
 			geometry->x = usable.x + margin.left;
@@ -879,23 +886,31 @@ adjust_floating_geometry(struct view *view, struct wlr_box *geometry,
 			adjusted = true;
 		}
 
-		if (!midpoint_visibility) {
-			/*
-			 * If midpoint visibility is not required, the view is
-			 * on screen if at least one pixel is visible.
-			 */
-			onscreen = true;
-		} else {
-			/* Otherwise, make sure the midpoint is on screen */
-			int mx = geometry->x + geometry->width / 2;
-			int my = geometry->y + geometry->height / 2;
+		if (midpoint_visibility) {
+			int total_width = geometry->width + margin.left + margin.right;
+			int visual_left = geometry->x - margin.left;
+			int mx = visual_left + total_width / 2;
+			if (mx > usable_right) {
+				geometry->x -= mx - usable_right;
+				adjusted = true;
+			}
 
-			onscreen = mx <= usable.x + usable.width &&
-				my <= usable.y + usable.height;
+			int total_height = geometry->height + margin.top + margin.bottom;
+			int visual_top = geometry->y - margin.top;
+			int my = visual_top + total_height / 2;
+			if (my > usable_bottom) {
+				geometry->y -= my - usable_bottom;
+				adjusted = true;
+			}
+
+			if (geometry->x < usable.x + margin.left) {
+				geometry->x = usable.x + margin.left;
+			}
+			if (geometry->y < usable.y + margin.top) {
+				geometry->y = usable.y + margin.top;
+			}
 		}
-	}
 
-	if (onscreen) {
 		return adjusted;
 	}
 

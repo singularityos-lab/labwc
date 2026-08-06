@@ -58,6 +58,7 @@
 #include "config/session.h"
 #include "decorations.h"
 #include "desktop-entry.h"
+#include "foreign-toplevel/foreign.h"
 #include "idle.h"
 #include "input/keyboard.h"
 #include "labwc.h"
@@ -86,6 +87,36 @@ void singularity_blur_init(void);
 #define LAB_WLR_FRACTIONAL_SCALE_V1_VERSION 1
 #define LAB_WLR_LINUX_DMABUF_VERSION 4
 #define LAB_WLR_PRESENTATION_TIME_VERSION 2
+
+static void
+handle_foreign_toplevel_image_capture_source_request(
+		struct wl_listener *listener, void *data)
+{
+	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request
+		*request = data;
+	struct wlr_ext_image_capture_source_v1 *source = NULL;
+	struct view *view;
+
+	wl_list_for_each(view, &server.views, link) {
+		if (!view->mapped || !view->scene_tree || !view->foreign_toplevel) {
+			continue;
+		}
+		if (foreign_toplevel_get_ext_handle(view->foreign_toplevel)
+				!= request->toplevel_handle) {
+			continue;
+		}
+
+		source = wlr_ext_image_capture_source_v1_create_with_scene_node(
+			&view->scene_tree->node, server.wl_event_loop,
+			server.allocator, server.renderer);
+		break;
+	}
+
+	if (!wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(
+			request, source)) {
+		wlr_log(WLR_ERROR, "failed to accept toplevel image capture request");
+	}
+}
 
 static void
 reload_config_and_theme(void)
@@ -693,6 +724,16 @@ server_init(void)
 	wlr_screencopy_manager_v1_create(server.wl_display);
 	wlr_ext_image_copy_capture_manager_v1_create(server.wl_display, 1);
 	wlr_ext_output_image_capture_source_manager_v1_create(server.wl_display, 1);
+	server.foreign_toplevel_image_capture_source_manager =
+		wlr_ext_foreign_toplevel_image_capture_source_manager_v1_create(
+			server.wl_display, 1);
+	if (server.foreign_toplevel_image_capture_source_manager) {
+		server.foreign_toplevel_image_capture_source_request.notify =
+			handle_foreign_toplevel_image_capture_source_request;
+		wl_signal_add(&server.foreign_toplevel_image_capture_source_manager
+				->events.new_request,
+			&server.foreign_toplevel_image_capture_source_request);
+	}
 	wlr_data_control_manager_v1_create(server.wl_display);
 	wlr_ext_data_control_manager_v1_create(server.wl_display,
 		LAB_EXT_DATA_CONTROL_VERSION);
@@ -829,6 +870,10 @@ server_finish(void)
 	if (server.drm_lease_request.notify) {
 		wl_list_remove(&server.drm_lease_request.link);
 		server.drm_lease_request.notify = NULL;
+	}
+	if (server.foreign_toplevel_image_capture_source_request.notify) {
+		wl_list_remove(&server.foreign_toplevel_image_capture_source_request.link);
+		server.foreign_toplevel_image_capture_source_request.notify = NULL;
 	}
 
 	wlr_backend_destroy(server.backend);

@@ -51,3 +51,12 @@ foreign_toplevel_get_handle(struct foreign_toplevel *toplevel)
 	}
 	return toplevel->wlr_toplevel.handle;
 }
+
+struct wlr_ext_foreign_toplevel_handle_v1 *
+foreign_toplevel_get_ext_handle(struct foreign_toplevel *toplevel)
+{
+	if (!toplevel) {
+		return NULL;
+	}
+	return toplevel->ext_toplevel.handle;
+}
