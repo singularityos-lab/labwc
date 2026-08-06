@@ -8,6 +8,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include "output.h"
+#include "singularity-splash.h"
 #include <assert.h>
 #include <drm_fourcc.h>
 #include <strings.h>
@@ -255,6 +256,8 @@ handle_output_frame(struct wl_listener *listener, void *data)
 		return;
 	}
 #endif
+
+	singularity_splash_maybe_show(output);
 
 	struct wlr_scene_output *scene_output = output->scene_output;
 	struct wlr_output_state *pending = &output->pending;

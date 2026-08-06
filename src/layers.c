@@ -7,6 +7,7 @@
  */
 
 #include "layers.h"
+#include "singularity-splash.h"
 #include <assert.h>
 #include <stdbool.h>
 #include <stdlib.h>
@@ -397,6 +398,8 @@ handle_map(struct wl_listener *listener, void *data)
 	if (wlr_output) {
 		output_update_usable_area(wlr_output->data);
 	}
+
+	singularity_splash_dismiss();
 
 	/*
 	 * Since moving to the wlroots scene-graph API, there is no need to

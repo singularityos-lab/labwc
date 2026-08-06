@@ -1000,20 +1000,14 @@ init_rootmenu(void)
 	struct menu *menu = menu_get_by_id("root-menu");
 	struct menuitem *item;
 
-	/* Default menu if no menu.xml found */
+	/* No menu.xml: leave the root menu empty rather than falling back to the
+	 * upstream Terminal/Reconfigure/Exit set. On a login or lock screen that
+	 * built-in Terminal is a way to reach an unauthenticated shell, so it must
+	 * not exist by default in any instance, configured or not. Where a root menu
+	 * is genuinely wanted, ship a menu.xml. */
 	if (!menu) {
 		menu = menu_create(NULL, "root-menu", "");
-
-		item = item_create(menu, _("Terminal"), NULL, false);
-		struct action *action = item_add_action(item, "Execute");
-		action_arg_add_str(action, "command", "lab-sensible-terminal");
-
-		separator_create(menu, NULL);
-
-		item = item_create(menu, _("Reconfigure"), NULL, false);
-		item_add_action(item, "Reconfigure");
-		item = item_create(menu, _("Exit"), NULL, false);
-		item_add_action(item, "Exit");
+		(void)item;
 	}
 }
 

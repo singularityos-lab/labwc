@@ -3,12 +3,22 @@
 #include "view-impl-common.h"
 #include "foreign-toplevel/foreign.h"
 #include "labwc.h"
+#include "singularity-splash.h"
 #include "view.h"
 #include "window-rules.h"
 
 void
 view_impl_map(struct view *view)
 {
+	/*
+	 * Any mapped toplevel ends the boot splash, same as a layer-shell
+	 * client (layers.c). Without this, an xdg-toplevel-only session (the
+	 * OOBE installer) stays covered by the raised splash tree forever:
+	 * the client paints, is fully occluded, gets no frame callbacks and
+	 * looks like a render bug.
+	 */
+	singularity_splash_dismiss();
+
 	view_update_visibility(view);
 
 	/* Leave minimized, if minimized before map */
