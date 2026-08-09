@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "common/lab-scene-rect.h"
 #include <assert.h>
+#include <string.h>
 #include <wlr/types/wlr_scene.h>
 #include "common/mem.h"
 #include "common/scene-helpers.h"
@@ -8,6 +9,7 @@
 struct border_scene {
 	struct wlr_scene_tree *tree;
 	struct wlr_scene_rect *top, *bottom, *left, *right;
+	float color[4];
 };
 
 static void
@@ -30,12 +32,14 @@ lab_scene_rect_create(struct wlr_scene_tree *parent,
 	rect->tree = lab_wlr_scene_tree_create(parent);
 
 	if (opts->bg_color) {
+		memcpy(rect->fill_color, opts->bg_color, sizeof(rect->fill_color));
 		rect->fill = lab_wlr_scene_rect_create(rect->tree, 0, 0, opts->bg_color);
 	}
 
 	for (int i = 0; i < rect->nr_borders; i++) {
 		struct border_scene *border = &rect->borders[i];
 		float *color = opts->border_colors[i];
+		memcpy(border->color, color, sizeof(border->color));
 		border->tree = lab_wlr_scene_tree_create(rect->tree);
 		border->top = lab_wlr_scene_rect_create(border->tree, 0, 0, color);
 		border->right = lab_wlr_scene_rect_create(border->tree, 0, 0, color);
@@ -49,6 +53,34 @@ lab_scene_rect_create(struct wlr_scene_tree *parent,
 	lab_scene_rect_set_size(rect, opts->width, opts->height);
 
 	return rect;
+}
+
+static void
+set_scene_rect_opacity(struct wlr_scene_rect *rect, float base[4], float opacity)
+{
+	float color[4];
+	for (int i = 0; i < 4; i++) {
+		color[i] = base[i] * opacity;
+	}
+	wlr_scene_rect_set_color(rect, color);
+}
+
+void
+lab_scene_rect_set_opacity(struct lab_scene_rect *rect, float opacity)
+{
+	assert(rect);
+	assert(opacity >= 0.0f && opacity <= 1.0f);
+
+	if (rect->fill) {
+		set_scene_rect_opacity(rect->fill, rect->fill_color, opacity);
+	}
+	for (int i = 0; i < rect->nr_borders; i++) {
+		struct border_scene *border = &rect->borders[i];
+		set_scene_rect_opacity(border->top, border->color, opacity);
+		set_scene_rect_opacity(border->right, border->color, opacity);
+		set_scene_rect_opacity(border->bottom, border->color, opacity);
+		set_scene_rect_opacity(border->left, border->color, opacity);
+	}
 }
 
 static void

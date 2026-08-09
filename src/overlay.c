@@ -12,6 +12,98 @@
 #include "theme.h"
 #include "view.h"
 
+#define OVERLAY_ANIMATION_INTERVAL_MS 16
+#define OVERLAY_ANIMATION_STEP 0.1f
+
+static void
+handle_rect_destroy(struct wl_listener *listener, void *data)
+{
+	struct overlay *overlay = wl_container_of(listener, overlay, rect_destroy);
+	wl_list_remove(&listener->link);
+	listener->notify = NULL;
+	overlay->rect = NULL;
+	overlay->opacity = 0.0f;
+}
+
+static void
+handle_outgoing_rect_destroy(struct wl_listener *listener, void *data)
+{
+	struct overlay *overlay =
+		wl_container_of(listener, overlay, outgoing_rect_destroy);
+	wl_list_remove(&listener->link);
+	listener->notify = NULL;
+	overlay->outgoing_rect = NULL;
+	overlay->outgoing_opacity = 0.0f;
+}
+
+static void
+finish_animation(struct overlay *overlay)
+{
+	if (overlay->rect) {
+		overlay->opacity = 1.0f;
+		lab_scene_rect_set_opacity(overlay->rect, 1.0f);
+	}
+	if (overlay->outgoing_rect) {
+		wlr_scene_node_destroy(&overlay->outgoing_rect->tree->node);
+	}
+	if (overlay->animation_timer) {
+		wl_event_source_remove(overlay->animation_timer);
+		overlay->animation_timer = NULL;
+	}
+}
+
+static int
+handle_animation_timeout(void *data)
+{
+	struct seat *seat = data;
+	struct overlay *overlay = &seat->overlay;
+	bool running = false;
+
+	if (overlay->rect && overlay->opacity < 1.0f) {
+		overlay->opacity = MIN(1.0f,
+			overlay->opacity + OVERLAY_ANIMATION_STEP);
+		lab_scene_rect_set_opacity(overlay->rect, overlay->opacity);
+		running = overlay->opacity < 1.0f;
+	}
+	if (overlay->outgoing_rect) {
+		overlay->outgoing_opacity = MAX(0.0f,
+			overlay->outgoing_opacity - OVERLAY_ANIMATION_STEP);
+		lab_scene_rect_set_opacity(overlay->outgoing_rect,
+			overlay->outgoing_opacity);
+		if (overlay->outgoing_opacity == 0.0f) {
+			wlr_scene_node_destroy(&overlay->outgoing_rect->tree->node);
+			overlay->outgoing_rect = NULL;
+		} else {
+			running = true;
+		}
+	}
+
+	if (running) {
+		if (wl_event_source_timer_update(overlay->animation_timer,
+				OVERLAY_ANIMATION_INTERVAL_MS) < 0) {
+			finish_animation(overlay);
+		}
+	} else {
+		wl_event_source_remove(overlay->animation_timer);
+		overlay->animation_timer = NULL;
+	}
+	return 0;
+}
+
+static void
+start_animation(struct seat *seat)
+{
+	if (!seat->overlay.animation_timer) {
+		seat->overlay.animation_timer = wl_event_loop_add_timer(
+			server.wl_event_loop, handle_animation_timeout, seat);
+	}
+	if (!seat->overlay.animation_timer
+			|| wl_event_source_timer_update(seat->overlay.animation_timer,
+				OVERLAY_ANIMATION_INTERVAL_MS) < 0) {
+		finish_animation(&seat->overlay);
+	}
+}
+
 static void
 show_overlay(struct seat *seat, struct theme_snapping_overlay *overlay_theme,
 		struct wlr_box *box)
@@ -42,6 +134,12 @@ show_overlay(struct seat *seat, struct theme_snapping_overlay *overlay_theme,
 
 	seat->overlay.rect =
 		lab_scene_rect_create(view->scene_tree->node.parent, &opts);
+	seat->overlay.rect_destroy.notify = handle_rect_destroy;
+	wl_signal_add(&seat->overlay.rect->tree->node.events.destroy,
+		&seat->overlay.rect_destroy);
+	seat->overlay.opacity = 0.0f;
+	lab_scene_rect_set_opacity(seat->overlay.rect, 0.0f);
+	start_animation(seat);
 
 	struct wlr_scene_node *node = &seat->overlay.rect->tree->node;
 	wlr_scene_node_place_below(node, &view->scene_tree->node);
@@ -160,11 +258,28 @@ overlay_update(struct seat *seat)
 void
 overlay_finish(struct seat *seat)
 {
-	if (seat->overlay.rect) {
-		wlr_scene_node_destroy(&seat->overlay.rect->tree->node);
-	}
 	if (seat->overlay.timer) {
 		wl_event_source_remove(seat->overlay.timer);
+		seat->overlay.timer = NULL;
 	}
-	seat->overlay = (struct overlay){0};
+	if (seat->overlay.rect) {
+		if (seat->overlay.outgoing_rect) {
+			wlr_scene_node_destroy(
+				&seat->overlay.outgoing_rect->tree->node);
+		}
+		wl_list_remove(&seat->overlay.rect_destroy.link);
+		seat->overlay.rect_destroy.notify = NULL;
+		seat->overlay.outgoing_rect = seat->overlay.rect;
+		seat->overlay.outgoing_opacity = seat->overlay.opacity;
+		seat->overlay.outgoing_rect_destroy.notify =
+			handle_outgoing_rect_destroy;
+		wl_signal_add(&seat->overlay.outgoing_rect->tree->node.events.destroy,
+			&seat->overlay.outgoing_rect_destroy);
+		seat->overlay.rect = NULL;
+		seat->overlay.opacity = 0.0f;
+		start_animation(seat);
+	}
+	seat->overlay.active.region = NULL;
+	seat->overlay.active.edge = LAB_EDGE_NONE;
+	seat->overlay.active.output = NULL;
 }

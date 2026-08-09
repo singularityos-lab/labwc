@@ -2,12 +2,18 @@
 #ifndef LABWC_OVERLAY_H
 #define LABWC_OVERLAY_H
 
+#include <wayland-server-core.h>
 #include "common/edge.h"
 
 struct seat;
 
 struct overlay {
 	struct lab_scene_rect *rect;
+	float opacity;
+	struct wl_listener rect_destroy;
+	struct lab_scene_rect *outgoing_rect;
+	float outgoing_opacity;
+	struct wl_listener outgoing_rect_destroy;
 
 	/* Represents currently shown or delayed overlay */
 	struct {
@@ -21,6 +27,7 @@ struct overlay {
 
 	/* For delayed snap-to-edge overlay */
 	struct wl_event_source *timer;
+	struct wl_event_source *animation_timer;
 };
 
 /*

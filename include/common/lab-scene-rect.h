@@ -20,6 +20,7 @@ struct lab_scene_rect {
 	int nr_borders;
 	struct border_scene *borders;
 	struct wlr_scene_rect *fill;
+	float fill_color[4];
 
 	struct wl_listener node_destroy;
 };
@@ -36,5 +37,6 @@ struct lab_scene_rect *lab_scene_rect_create(struct wlr_scene_tree *parent,
 	struct lab_scene_rect_options *opts);
 
 void lab_scene_rect_set_size(struct lab_scene_rect *rect, int width, int height);
+void lab_scene_rect_set_opacity(struct lab_scene_rect *rect, float opacity);
 
 #endif /* LABWC_LAB_SCENE_RECT_H */
