@@ -89,6 +89,7 @@ enum view_layer {
 };
 
 struct view;
+struct view_animation;
 struct wlr_surface;
 struct foreign_toplevel;
 
@@ -172,6 +173,7 @@ struct view {
 	struct wlr_surface *surface;
 	struct wlr_scene_tree *scene_tree;
 	struct wlr_scene_tree *content_tree; /* may be NULL for unmapped view */
+	struct view_animation *animation;
 
 	/* These are never NULL and an empty string is set instead. */
 	char *title;
@@ -179,8 +181,12 @@ struct view {
 
 	bool mapped;
 	bool been_mapped;
+	bool opening_animation_pending;
 	uint64_t creation_id;
 	enum lab_ssd_mode ssd_mode;
+	enum lab_ssd_mode singularity_tiling_ssd_mode;
+	bool singularity_tiling_ssd_mode_valid;
+	bool singularity_scrolling_tiled;
 	enum ssd_preference ssd_preference;
 	bool shaded;
 	bool minimized;

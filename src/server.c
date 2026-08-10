@@ -67,6 +67,8 @@
 #include "menu/menu.h"
 #include "output.h"
 #include "output-virtual.h"
+#include "protocols/singularity-tiling.h"
+#include "protocols/singularity-gesture.h"
 #include "regions.h"
 #include "resize-indicator.h"
 #include "scaled-buffer/scaled-buffer.h"
@@ -78,7 +80,6 @@
 #include "xwayland.h"
 
 void singularity_preview_init(void);
-void singularity_tiling_init(void);
 void singularity_blur_init(void);
 
 #define LAB_EXT_DATA_CONTROL_VERSION 1
@@ -651,6 +652,7 @@ server_init(void)
 		server.wl_display, 1, server.renderer);
 
 	server.workspace_tree = lab_wlr_scene_tree_create(&server.scene->tree);
+	server.view_animation_tree = lab_wlr_scene_tree_create(&server.scene->tree);
 	server.xdg_popup_tree = lab_wlr_scene_tree_create(&server.scene->tree);
 #if HAVE_XWAYLAND
 	// Creating/setting this is harmless when xwayland support is built-in
@@ -764,6 +766,7 @@ server_init(void)
 
 	singularity_preview_init();
 	singularity_tiling_init();
+	singularity_gesture_init();
 	singularity_blur_init();
 
 	wlr_alpha_modifier_v1_create(server.wl_display);

@@ -5,6 +5,7 @@
 #include <wlr/util/box.h>
 #include <wlr/util/log.h>
 #include "common/set.h"
+#include "config/mousebind.h"
 #include "cycle.h"
 #include "input/cursor.h"
 #include "overlay.h"
@@ -13,6 +14,7 @@
 #define XCURSOR_SIZE 24
 
 struct wlr_xdg_popup;
+struct view_animation;
 
 enum input_mode {
 	LAB_INPUT_STATE_PASSTHROUGH = 0,
@@ -116,6 +118,16 @@ struct seat {
 	struct wl_listener swipe_begin;
 	struct wl_listener swipe_update;
 	struct wl_listener swipe_end;
+	struct {
+		bool claimed;
+		bool forwarded;
+		bool shell_gesture;
+		bool workspace_gesture;
+		uint32_t fingers;
+		enum direction direction;
+		double dx;
+		double dy;
+	} swipe;
 	struct wl_listener hold_begin;
 	struct wl_listener hold_end;
 
@@ -231,6 +243,7 @@ struct server {
 
 	/* Tree for all non-layer xdg/xwayland-shell surfaces */
 	struct wlr_scene_tree *workspace_tree;
+	struct wlr_scene_tree *view_animation_tree;
 
 	/*
 	 * Popups need to be rendered above always-on-top views, so we reparent

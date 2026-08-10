@@ -27,6 +27,22 @@
 #include "view.h"
 
 #define EXT_WORKSPACES_VERSION 1
+#define WORKSPACE_SWIPE_INTERVAL_MS 16
+#define WORKSPACE_SWIPE_FRAMES 12
+
+static struct {
+	bool active;
+	struct workspace *from;
+	struct workspace *to;
+	enum direction direction;
+	int width;
+	double position;
+	double settle_from;
+	double settle_to;
+	int frame;
+	bool commit;
+	struct wl_event_source *timer;
+} workspace_swipe;
 
 /* Internal helpers */
 static size_t
@@ -499,6 +515,136 @@ workspaces_switch_to(struct workspace *target, bool update_focus)
 	wlr_ext_workspace_handle_v1_set_active(target->ext_workspace, true);
 
 	show_desktop_reset();
+}
+
+static void
+workspace_swipe_position(double position)
+{
+	workspace_swipe.position = position;
+	wlr_scene_node_set_position(&workspace_swipe.from->tree->node,
+		(int)position, 0);
+	int target_x = workspace_swipe.direction == LAB_DIRECTION_LEFT
+		? workspace_swipe.width + (int)position
+		: -workspace_swipe.width + (int)position;
+	wlr_scene_node_set_position(&workspace_swipe.to->tree->node, target_x, 0);
+}
+
+static void
+workspace_swipe_finish(void)
+{
+	if (workspace_swipe.timer) {
+		wl_event_source_remove(workspace_swipe.timer);
+		workspace_swipe.timer = NULL;
+	}
+	wlr_scene_node_set_position(&workspace_swipe.from->tree->node, 0, 0);
+	wlr_scene_node_set_position(&workspace_swipe.to->tree->node, 0, 0);
+	if (workspace_swipe.commit) {
+		workspaces_switch_to(workspace_swipe.to, true);
+	} else {
+		wlr_scene_node_set_enabled(&workspace_swipe.to->tree->node, false);
+	}
+	workspace_swipe.active = false;
+	workspace_swipe.from = NULL;
+	workspace_swipe.to = NULL;
+}
+
+static double
+ease_out_cubic(double progress)
+{
+	double remaining = 1.0 - progress;
+	return 1.0 - remaining * remaining * remaining;
+}
+
+static int
+workspace_swipe_settle(void *data)
+{
+	workspace_swipe.frame++;
+	double progress = MIN(1.0,
+		(double)workspace_swipe.frame / WORKSPACE_SWIPE_FRAMES);
+	double eased = ease_out_cubic(progress);
+	workspace_swipe_position(workspace_swipe.settle_from
+		+ (workspace_swipe.settle_to - workspace_swipe.settle_from) * eased);
+	if (workspace_swipe.frame >= WORKSPACE_SWIPE_FRAMES) {
+		workspace_swipe_finish();
+		return 0;
+	}
+	if (wl_event_source_timer_update(workspace_swipe.timer,
+			WORKSPACE_SWIPE_INTERVAL_MS) < 0) {
+		workspace_swipe_finish();
+	}
+	return 0;
+}
+
+bool
+workspaces_swipe_begin(enum direction direction)
+{
+	if (direction != LAB_DIRECTION_LEFT && direction != LAB_DIRECTION_RIGHT) {
+		return false;
+	}
+	if (workspace_swipe.active) {
+		workspace_swipe_finish();
+	}
+	struct workspace *target = direction == LAB_DIRECTION_LEFT
+		? get_next(server.workspaces.current, &server.workspaces.all, true)
+		: get_prev(server.workspaces.current, &server.workspaces.all, true);
+	if (!target || target == server.workspaces.current) {
+		return false;
+	}
+	struct wlr_box layout_box;
+	wlr_output_layout_get_box(server.output_layout, NULL, &layout_box);
+	if (layout_box.width < 1) {
+		return false;
+	}
+	workspace_swipe.active = true;
+	workspace_swipe.from = server.workspaces.current;
+	workspace_swipe.to = target;
+	workspace_swipe.direction = direction;
+	workspace_swipe.width = layout_box.width;
+	workspace_swipe.position = 0;
+	workspace_swipe.timer = NULL;
+	wlr_scene_node_set_enabled(&target->tree->node, true);
+	workspace_swipe_position(0);
+	return true;
+}
+
+void
+workspaces_swipe_update(double dx)
+{
+	if (!workspace_swipe.active || workspace_swipe.timer) {
+		return;
+	}
+	double position = workspace_swipe.direction == LAB_DIRECTION_LEFT
+		? MAX(-workspace_swipe.width, MIN(0, dx))
+		: MIN(workspace_swipe.width, MAX(0, dx));
+	workspace_swipe_position(position);
+}
+
+void
+workspaces_swipe_end(bool commit)
+{
+	if (!workspace_swipe.active || workspace_swipe.timer) {
+		return;
+	}
+	workspace_swipe.commit = commit;
+	workspace_swipe.settle_from = workspace_swipe.position;
+	workspace_swipe.settle_to = commit
+		? (workspace_swipe.direction == LAB_DIRECTION_LEFT
+			? -workspace_swipe.width : workspace_swipe.width)
+		: 0;
+	workspace_swipe.frame = 0;
+	if (!rc.window_animations
+			|| workspace_swipe.settle_from == workspace_swipe.settle_to) {
+		workspace_swipe_position(workspace_swipe.settle_to);
+		workspace_swipe_finish();
+		return;
+	}
+	workspace_swipe.timer = wl_event_loop_add_timer(server.wl_event_loop,
+		workspace_swipe_settle, NULL);
+	if (!workspace_swipe.timer
+			|| wl_event_source_timer_update(workspace_swipe.timer,
+				WORKSPACE_SWIPE_INTERVAL_MS) < 0) {
+		workspace_swipe_finish();
+	}
 }
 
 void

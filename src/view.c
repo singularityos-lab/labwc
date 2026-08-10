@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "view.h"
+#include "view-animation.h"
 #include <assert.h>
 #include <strings.h>
 #include <wlr/types/wlr_cursor.h>
@@ -798,8 +799,11 @@ view_minimize(struct view *view, bool minimized)
 	 * 'open file' dialog), so it saves trying to unmap them twice
 	 */
 	struct view *root = view_get_root(view);
+	struct view_animation *animation = root->minimized == minimized
+		? NULL : view_animation_create(root);
 	_minimize(root, minimized, &need_refocus);
 	minimize_sub_views(root, minimized, &need_refocus);
+	view_animation_start_minimize(animation, minimized);
 
 	/*
 	 * Update focus only at the end to avoid repeated focus changes.
@@ -1436,6 +1440,8 @@ view_maximize(struct view *view, enum view_axis axis)
 	if (view->fullscreen) {
 		return;
 	}
+	struct view_animation *animation = view->minimized
+		? NULL : view_animation_create(view);
 
 	bool store_natural_geometry = !in_interactive_move(view);
 	view_set_shade(view, false);
@@ -1473,6 +1479,7 @@ view_maximize(struct view *view, enum view_axis axis)
 	} else {
 		view_apply_special_geometry(view);
 	}
+	view_animation_start_geometry(animation, &view->pending);
 }
 
 void
@@ -1604,6 +1611,7 @@ view_move_to_workspace(struct view *view, struct workspace *workspace)
 	assert(view);
 	assert(workspace);
 	if (view->workspace != workspace) {
+		view_animation_cancel(view);
 		view->workspace = workspace;
 		wlr_scene_node_reparent(&view->scene_tree->node,
 			workspace->view_trees[view->layer]);
@@ -1659,7 +1667,9 @@ view_set_ssd_mode(struct view *view, enum lab_ssd_mode mode)
 		undecorate(view);
 	}
 
-	if (!view_is_floating(view)) {
+	if (!(view->singularity_scrolling_tiled && !view->fullscreen
+			&& view->maximized == VIEW_AXIS_NONE)
+			&& !view_is_floating(view)) {
 		view_apply_special_geometry(view);
 	}
 }
@@ -1711,6 +1721,7 @@ view_set_fullscreen(struct view *view, bool fullscreen)
 	if (fullscreen == view->fullscreen) {
 		return;
 	}
+	view_animation_cancel(view);
 	if (fullscreen) {
 		if (!output_is_usable(view->output)) {
 			/* Prevent fullscreen with no available outputs */
@@ -2146,6 +2157,9 @@ view_move_to_output(struct view *view, struct output *output)
 {
 	assert(view);
 
+	if (view->output != output) {
+		view_animation_cancel(view);
+	}
 	view_set_output(view, output);
 	if (view_is_floating(view)) {
 		struct wlr_box output_area = output_usable_area_in_layout_coords(output);
@@ -2390,8 +2404,17 @@ void
 view_update_visibility(struct view *view)
 {
 	bool visible = view->mapped && !view->minimized;
-	if (visible == view->scene_tree->node.enabled) {
+	bool enabled = view->scene_tree->node.enabled;
+	bool animation_running = view_animation_is_running(view);
+	if (animation_running && visible && !enabled) {
 		return;
+	}
+	bool animation_masks_hide = animation_running && !visible && !enabled;
+	if (!animation_masks_hide && visible == enabled) {
+		return;
+	}
+	if (animation_masks_hide) {
+		view_animation_cancel(view);
 	}
 
 	wlr_scene_node_set_enabled(&view->scene_tree->node, visible);
@@ -2503,6 +2526,7 @@ void
 view_destroy(struct view *view)
 {
 	assert(view);
+	view_animation_cancel(view);
 
 	wl_signal_emit_mutable(&view->events.destroy, NULL);
 	snap_constraints_invalidate(view);

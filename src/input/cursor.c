@@ -34,6 +34,7 @@
 #include "output.h"
 #include "resistance.h"
 #include "resize-outlines.h"
+#include "protocols/singularity-tiling.h"
 #include "ssd.h"
 #include "view.h"
 #include "xwayland.h"
@@ -275,6 +276,18 @@ process_cursor_move(uint32_t time)
 
 	int x = server.grab_box.x + (server.seat.cursor->x - server.grab_x);
 	int y = server.grab_box.y + (server.seat.cursor->y - server.grab_y);
+	if (view->singularity_scrolling_tiled) {
+		struct wlr_box geometry = view->pending;
+		geometry.x = x;
+		geometry.y = y;
+		view_move(view, x, y);
+		singularity_tiling_send_interaction(view,
+			SINGULARITY_TILING_INTERACTION_UPDATE,
+			SINGULARITY_TILING_INTERACTION_MOVE,
+			&geometry, server.resize_edges);
+		overlay_update(&server.seat);
+		return;
+	}
 
 	/* Apply resistance for maximized/tiled view */
 	bool needs_untile = resistance_unsnap_apply(view, &x, &y);
@@ -383,6 +396,12 @@ process_cursor_resize(uint32_t time)
 		view_move_resize(view, new_view_geo);
 	} else {
 		resize_outlines_update(view, new_view_geo);
+	}
+	if (view->singularity_scrolling_tiled) {
+		singularity_tiling_send_interaction(view,
+			SINGULARITY_TILING_INTERACTION_UPDATE,
+			SINGULARITY_TILING_INTERACTION_RESIZE,
+			&new_view_geo, server.resize_edges);
 	}
 }
 

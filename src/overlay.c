@@ -8,6 +8,7 @@
 #include "config/rcxml.h"
 #include "labwc.h"
 #include "output.h"
+#include "protocols/singularity-tiling.h"
 #include "regions.h"
 #include "theme.h"
 #include "view.h"
@@ -159,6 +160,34 @@ show_region_overlay(struct seat *seat, struct region *region)
 	show_overlay(seat, &rc.theme->snapping_overlay_region, &geo);
 }
 
+static void
+show_float_drop_overlay(struct seat *seat)
+{
+	if (seat->overlay.active.float_drop) {
+		return;
+	}
+	struct wlr_box box;
+	if (!singularity_tiling_get_float_drop_box(server.grabbed_view, &box)) {
+		return;
+	}
+	overlay_finish(seat);
+	seat->overlay.active.float_drop = true;
+	show_overlay(seat, &rc.theme->snapping_overlay_region, &box);
+}
+
+static void
+show_tiling_drop_overlay(struct seat *seat, struct wlr_box *box)
+{
+	if (seat->overlay.active.tiling_drop
+			&& wlr_box_equal(&seat->overlay.active.tiling_drop_box, box)) {
+		return;
+	}
+	overlay_finish(seat);
+	seat->overlay.active.tiling_drop = true;
+	seat->overlay.active.tiling_drop_box = *box;
+	show_overlay(seat, &rc.theme->snapping_overlay_region, box);
+}
+
 static struct wlr_box
 get_edge_snap_box(enum lab_edge edge, struct output *output)
 {
@@ -235,6 +264,23 @@ show_edge_overlay(struct seat *seat, enum lab_edge edge1, enum lab_edge edge2,
 void
 overlay_update(struct seat *seat)
 {
+	if (singularity_tiling_scrolling_mode_enabled()) {
+		if (server.grabbed_view
+				&& server.grabbed_view->singularity_scrolling_tiled
+				&& singularity_tiling_float_candidate(server.grabbed_view)) {
+			show_float_drop_overlay(seat);
+		} else {
+			struct wlr_box box;
+			if (server.grabbed_view
+					&& singularity_tiling_get_drop_preview_box(&box)) {
+				show_tiling_drop_overlay(seat, &box);
+			} else {
+				overlay_finish(seat);
+			}
+		}
+		return;
+	}
+
 	/* Region-snapping overlay */
 	if (regions_should_snap()) {
 		struct region *region = regions_from_cursor();
@@ -282,4 +328,7 @@ overlay_finish(struct seat *seat)
 	seat->overlay.active.region = NULL;
 	seat->overlay.active.edge = LAB_EDGE_NONE;
 	seat->overlay.active.output = NULL;
+	seat->overlay.active.float_drop = false;
+	seat->overlay.active.tiling_drop = false;
+	seat->overlay.active.tiling_drop_box = (struct wlr_box){0};
 }

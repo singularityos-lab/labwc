@@ -2,7 +2,9 @@
 #ifndef LABWC_OVERLAY_H
 #define LABWC_OVERLAY_H
 
+#include <stdbool.h>
 #include <wayland-server-core.h>
+#include <wlr/util/box.h>
 #include "common/edge.h"
 
 struct seat;
@@ -23,6 +25,11 @@ struct overlay {
 		/* Snap-to-edge overlay */
 		enum lab_edge edge;
 		struct output *output;
+
+		bool float_drop;
+
+		bool tiling_drop;
+		struct wlr_box tiling_drop_box;
 	} active;
 
 	/* For delayed snap-to-edge overlay */

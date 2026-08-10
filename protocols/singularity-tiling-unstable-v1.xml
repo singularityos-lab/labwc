@@ -4,7 +4,7 @@
     Copyright © 2024 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_tiling_manager_v1" version="3">
+  <interface name="zsingularity_tiling_manager_v1" version="6">
     <description summary="tiling window management">
       This interface allows a client to manage window geometry for tiling purposes.
     </description>
@@ -81,6 +81,81 @@
       </description>
       <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
       <arg name="workspace" type="uint"/>
+    </request>
+
+    <request name="get_workarea" since="4">
+      <description summary="query output work area">
+        Requests the usable area of the output containing a toplevel, excluding
+        space reserved by layer surfaces.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+    </request>
+
+    <event name="workarea" since="4">
+      <description summary="reported output work area">
+        Sent in response to get_workarea.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+
+    <request name="set_scrolling_mode" since="5">
+      <description summary="set scrolling tiling mode">
+        Enables compositor interaction rules for the scrolling layout.
+      </description>
+      <arg name="enabled" type="uint"/>
+    </request>
+
+    <request name="detach_tiled" since="5">
+      <description summary="detach a tiled window at its current geometry">
+        Returns a scrolling tiled window to floating state without restoring
+        the geometry it had before entering the layout.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+    </request>
+
+    <enum name="interaction_phase" since="5">
+      <entry name="begin" value="0"/>
+      <entry name="update" value="1"/>
+      <entry name="end" value="2"/>
+    </enum>
+
+    <enum name="interaction_kind" since="5">
+      <entry name="move" value="0"/>
+      <entry name="resize" value="1"/>
+    </enum>
+
+    <event name="interaction" since="5">
+      <description summary="interactive scrolling layout change">
+        Reports compositor-owned move and resize progress so the shell can
+        keep the rest of the scrolling strip attached to the grabbed window.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+      <arg name="phase" type="uint" enum="interaction_phase"/>
+      <arg name="kind" type="uint" enum="interaction_kind"/>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="cursor_x" type="int"/>
+      <arg name="cursor_y" type="int"/>
+      <arg name="edges" type="uint"/>
+      <arg name="float_candidate" type="uint"/>
+    </event>
+
+    <request name="set_drop_preview" since="6">
+      <description summary="show a scrolling layout drop target">
+        Sets or clears the compositor overlay used to preview the destination
+        of an interactive scrolling layout move.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+      <arg name="visible" type="uint"/>
     </request>
   </interface>
 </protocol>
