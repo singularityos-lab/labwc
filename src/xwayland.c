@@ -21,6 +21,7 @@
 #include "node.h"
 #include "output.h"
 #include "view.h"
+#include "view-animation.h"
 #include "view-impl-common.h"
 #include "window-rules.h"
 #include "workspaces.h"
@@ -771,6 +772,7 @@ handle_map(struct wl_listener *listener, void *data)
 {
 	struct view *view = wl_container_of(listener, view, mappable.map);
 	struct xwayland_view *xwayland_view = xwayland_view_from_view(view);
+	bool first_map = !view->been_mapped;
 	assert(view->surface);
 
 	if (view->mapped) {
@@ -823,6 +825,9 @@ handle_map(struct wl_listener *listener, void *data)
 	}
 
 	view_impl_map(view);
+	if (first_map) {
+		view_animation_start_open(view_animation_create(view));
+	}
 	view->been_mapped = true;
 }
 

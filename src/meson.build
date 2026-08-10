@@ -29,6 +29,7 @@ labwc_sources = files(
   'tearing.c',
   'theme.c',
   'view.c',
+  'view-animation.c',
   'view-impl-common.c',
   'window-rules.c',
   'workspaces.c',

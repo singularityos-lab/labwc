@@ -23,6 +23,7 @@
 #include "output.h"
 #include "snap-constraints.h"
 #include "view.h"
+#include "view-animation.h"
 #include "view-impl-common.h"
 #include "window-rules.h"
 #include "workspaces.h"
@@ -215,6 +216,16 @@ center_fullscreen_if_needed(struct view *view)
 static void set_pending_configure_serial(struct view *view, uint32_t serial);
 
 static void
+start_open_animation(struct view *view)
+{
+	if (!view->opening_animation_pending || wlr_box_empty(&view->current)) {
+		return;
+	}
+	view->opening_animation_pending = false;
+	view_animation_start_open(view_animation_create(view));
+}
+
+static void
 handle_commit(struct wl_listener *listener, void *data)
 {
 	struct view *view = wl_container_of(listener, view, commit);
@@ -366,6 +377,7 @@ handle_commit(struct wl_listener *listener, void *data)
 			toplevel->scheduled.height = view->current.height;
 		}
 	}
+	start_open_animation(view);
 }
 
 static int
@@ -816,6 +828,7 @@ static void
 handle_map(struct wl_listener *listener, void *data)
 {
 	struct view *view = wl_container_of(listener, view, mappable.map);
+	bool first_map = !view->been_mapped;
 	if (view->mapped) {
 		return;
 	}
@@ -854,6 +867,10 @@ handle_map(struct wl_listener *listener, void *data)
 	}
 
 	view_impl_map(view);
+	if (first_map) {
+		view->opening_animation_pending = true;
+		start_open_animation(view);
+	}
 	view->been_mapped = true;
 }
 

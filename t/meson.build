@@ -20,6 +20,7 @@ test_lib = static_library(
 
 tests = [
   'buf-simple',
+  'gesture',
   'str',
   'xml',
 ]
@@ -29,10 +30,13 @@ foreach t : tests
     'test_@0@'.format(t),
     executable(
       'test_@0@'.format(t),
-      sources: '@0@.c'.format(t),
+      sources: t == 'gesture' ? [
+        '@0@.c'.format(t),
+        '../src/config/gesturebind.c',
+      ] : '@0@.c'.format(t),
       include_directories: [labwc_inc],
       link_with: [test_lib],
-      dependencies: test_deps,
+      dependencies: t == 'gesture' ? test_deps + [math] : test_deps,
     ),
     is_parallel: false,
   )

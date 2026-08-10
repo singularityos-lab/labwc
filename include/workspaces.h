@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <wayland-util.h>
 #include <wayland-server-core.h>
+#include "config/mousebind.h"
 
 struct seat;
 struct server;
@@ -27,5 +28,8 @@ void workspaces_osd_hide(struct seat *seat);
 struct workspace *workspaces_find(struct workspace *anchor, const char *name,
 	bool wrap);
 void workspaces_reconfigure(void);
+bool workspaces_swipe_begin(enum direction direction);
+void workspaces_swipe_update(double dx);
+void workspaces_swipe_end(bool commit);
 
 #endif /* LABWC_WORKSPACES_H */

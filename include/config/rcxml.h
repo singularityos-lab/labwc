@@ -86,6 +86,7 @@ struct rcxml {
 	uint32_t allowed_interfaces;
 	bool xwayland_persistence;
 	bool primary_selection;
+	bool window_animations;
 	char *prompt_command;
 
 	/* placement */
@@ -137,6 +138,7 @@ struct rcxml {
 	/* mouse */
 	long doubleclick_time;     /* in ms */
 	struct wl_list mousebinds; /* struct mousebind.link */
+	struct wl_list gesturebinds; /* struct gesturebind.link */
 
 	/* touch tablet */
 	struct wl_list touch_configs;

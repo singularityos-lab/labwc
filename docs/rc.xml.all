@@ -16,6 +16,7 @@
     <hdr>no</hdr>
     <reuseOutputMode>no</reuseOutputMode>
     <xwaylandPersistence>no</xwaylandPersistence>
+    <windowAnimations>no</windowAnimations>
     <primarySelection>yes</primarySelection>
     <!--
       # See labwc-config(5) for details
@@ -513,6 +514,10 @@
         <action name="GoToDesktop" to="right" wrap="yes" />
       </mousebind>
     </context>
+
+    <gesturebind type="swipe" fingers="3" direction="Left" threshold="80">
+      <action name="GoToDesktop" to="right" wrap="yes" />
+    </gesturebind>
 
   </mouse>
 

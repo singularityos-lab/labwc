@@ -6,6 +6,7 @@
 #include "input/keyboard.h"
 #include "labwc.h"
 #include "output.h"
+#include "protocols/singularity-tiling.h"
 #include "regions.h"
 #include "resize-indicator.h"
 #include "view.h"
@@ -100,6 +101,7 @@ interactive_begin(struct view *view, enum input_mode mode, enum lab_edge edges)
 	}
 
 	enum lab_cursors cursor_shape = LAB_CURSOR_DEFAULT;
+	bool scrolling_tiled = view->singularity_scrolling_tiled;
 
 	switch (mode) {
 	case LAB_INPUT_STATE_MOVE:
@@ -154,7 +156,9 @@ interactive_begin(struct view *view, enum input_mode mode, enum lab_edge edges)
 			maximized &= ~VIEW_AXIS_VERTICAL;
 		}
 		view_set_maximized(view, maximized);
-		view_set_untiled(view);
+		if (!scrolling_tiled) {
+			view_set_untiled(view);
+		}
 		cursor_shape = cursor_get_from_edge(server.resize_edges);
 		break;
 	}
@@ -172,7 +176,8 @@ interactive_begin(struct view *view, enum input_mode mode, enum lab_edge edges)
 	 * then we set a size of 0x0 here and determine the correct geometry
 	 * later. See do_late_positioning() in xdg.c.
 	 */
-	if (mode == LAB_INPUT_STATE_MOVE && !view_is_floating(view)
+	if (mode == LAB_INPUT_STATE_MOVE && !scrolling_tiled
+			&& !view_is_floating(view)
 			&& rc.unsnap_threshold <= 0) {
 		struct wlr_box natural_geo = view->natural_geometry;
 		interactive_anchor_to_cursor(&natural_geo);
@@ -188,6 +193,14 @@ interactive_begin(struct view *view, enum input_mode mode, enum lab_edge edges)
 	}
 	if (rc.window_edge_strength) {
 		edges_calculate_visibility(view);
+	}
+	if (scrolling_tiled) {
+		singularity_tiling_send_interaction(view,
+			SINGULARITY_TILING_INTERACTION_BEGIN,
+			mode == LAB_INPUT_STATE_MOVE
+				? SINGULARITY_TILING_INTERACTION_MOVE
+				: SINGULARITY_TILING_INTERACTION_RESIZE,
+			&view->pending, server.resize_edges);
 	}
 }
 
@@ -325,10 +338,20 @@ interactive_finish(struct view *view)
 		return;
 	}
 
-	if (server.input_mode == LAB_INPUT_STATE_MOVE) {
+	bool scrolling_tiled = view->singularity_scrolling_tiled;
+	if (server.input_mode == LAB_INPUT_STATE_MOVE
+			&& !singularity_tiling_scrolling_mode_enabled()) {
 		if (!snap_to_region(view)) {
 			snap_to_edge(view);
 		}
+	}
+	if (scrolling_tiled) {
+		singularity_tiling_send_interaction(view,
+			SINGULARITY_TILING_INTERACTION_END,
+			server.input_mode == LAB_INPUT_STATE_MOVE
+				? SINGULARITY_TILING_INTERACTION_MOVE
+				: SINGULARITY_TILING_INTERACTION_RESIZE,
+			&view->pending, server.resize_edges);
 	}
 
 	interactive_cancel(view);

@@ -23,6 +23,7 @@
 #include "common/string-helpers.h"
 #include "common/xml.h"
 #include "config/default-bindings.h"
+#include "config/gesturebind.h"
 #include "config/keybind.h"
 #include "config/libinput.h"
 #include "config/mousebind.h"
@@ -658,6 +659,42 @@ fill_mouse_context(xmlNode *node)
 }
 
 static void
+fill_gesturebind(xmlNode *node)
+{
+	char buf[256];
+	int fingers = 0;
+	int threshold = 80;
+	enum gesture_type type = LAB_GESTURE_INVALID;
+	enum direction direction = LAB_DIRECTION_INVALID;
+
+	if (lab_xml_get_string(node, "type", buf, sizeof(buf))
+			&& !strcasecmp(buf, "swipe")) {
+		type = LAB_GESTURE_SWIPE;
+	}
+	if (lab_xml_get_string(node, "direction", buf, sizeof(buf))) {
+		direction = mousebind_direction_from_str(buf, NULL);
+	}
+	if (lab_xml_get_string(node, "fingers", buf, sizeof(buf))) {
+		fingers = atoi(buf);
+	}
+	if (lab_xml_get_string(node, "threshold", buf, sizeof(buf))) {
+		threshold = atoi(buf);
+	}
+	if (fingers < 1 || threshold < 1) {
+		wlr_log(WLR_ERROR, "Invalid gesture binding");
+		return;
+	}
+
+	struct gesturebind *bind = gesturebind_create(type, (uint32_t)fingers,
+		direction, threshold);
+	if (!bind) {
+		wlr_log(WLR_ERROR, "Invalid gesture binding");
+		return;
+	}
+	append_parsed_actions(node, &bind->actions);
+}
+
+static void
 fill_touch(xmlNode *node)
 {
 	struct touch_config_entry *touch_config = znew(*touch_config);
@@ -1109,6 +1146,8 @@ entry(xmlNode *node, char *nodename, char *content)
 		fill_keybind(node);
 	} else if (!strcasecmp(nodename, "context.mouse")) {
 		fill_mouse_context(node);
+	} else if (!strcasecmp(nodename, "gesturebind.mouse")) {
+		fill_gesturebind(node);
 	} else if (!strcasecmp(nodename, "touch")) {
 		fill_touch(node);
 	} else if (!strcasecmp(nodename, "device.libinput")) {
@@ -1165,6 +1204,8 @@ entry(xmlNode *node, char *nodename, char *content)
 		set_bool(content, &rc.xwayland_persistence);
 	} else if (!strcasecmp(nodename, "primarySelection.core")) {
 		set_bool(content, &rc.primary_selection);
+	} else if (!strcasecmp(nodename, "windowAnimations.core")) {
+		set_bool(content, &rc.window_animations);
 
 	} else if (!strcasecmp(nodename, "promptCommand.core")) {
 		xstrdup_replace(rc.prompt_command, content);
@@ -1512,6 +1553,7 @@ rcxml_init(void)
 		wl_list_init(&rc.usable_area_overrides);
 		wl_list_init(&rc.keybinds);
 		wl_list_init(&rc.mousebinds);
+		wl_list_init(&rc.gesturebinds);
 		wl_list_init(&rc.libinput_categories);
 		wl_list_init(&rc.workspace_config.workspaces);
 		wl_list_init(&rc.regions);
@@ -1543,6 +1585,7 @@ rcxml_init(void)
 	rc.allowed_interfaces = UINT32_MAX;
 	rc.xwayland_persistence = false;
 	rc.primary_selection = true;
+	rc.window_animations = false;
 
 	init_font_defaults(&rc.font_activewindow);
 	init_font_defaults(&rc.font_inactivewindow);
@@ -1717,6 +1760,31 @@ deduplicate_mouse_bindings(void)
 }
 
 static void
+deduplicate_gesture_bindings(void)
+{
+	struct gesturebind *current, *tmp, *existing;
+	wl_list_for_each_safe(existing, tmp, &rc.gesturebinds, link) {
+		wl_list_for_each_reverse(current, &rc.gesturebinds, link) {
+			if (existing == current) {
+				break;
+			}
+			if (gesturebind_the_same(existing, current)) {
+				wl_list_remove(&existing->link);
+				action_list_free(&existing->actions);
+				free(existing);
+				break;
+			}
+		}
+	}
+	wl_list_for_each_safe(current, tmp, &rc.gesturebinds, link) {
+		if (wl_list_empty(&current->actions)) {
+			wl_list_remove(&current->link);
+			free(current);
+		}
+	}
+}
+
+static void
 deduplicate_key_bindings(void)
 {
 	uint32_t replaced = 0;
@@ -1839,6 +1907,7 @@ post_processing(void)
 	 */
 	deduplicate_key_bindings();
 	deduplicate_mouse_bindings();
+	deduplicate_gesture_bindings();
 
 	if (!rc.font_activewindow.name) {
 		rc.font_activewindow.name = xstrdup("sans");
@@ -1936,6 +2005,22 @@ validate_actions(void)
 				action_free(action);
 				wlr_log(WLR_ERROR, "Removed invalid mousebind action");
 			}
+		}
+	}
+
+	struct gesturebind *gesturebind, *gesturebind_tmp;
+	wl_list_for_each_safe(gesturebind, gesturebind_tmp,
+			&rc.gesturebinds, link) {
+		wl_list_for_each_safe(action, action_tmp, &gesturebind->actions, link) {
+			if (!action_is_valid(action)) {
+				wl_list_remove(&action->link);
+				action_free(action);
+				wlr_log(WLR_ERROR, "Removed invalid gesturebind action");
+			}
+		}
+		if (wl_list_empty(&gesturebind->actions)) {
+			wl_list_remove(&gesturebind->link);
+			zfree(gesturebind);
 		}
 	}
 
@@ -2088,6 +2173,13 @@ rcxml_finish(void)
 		wl_list_remove(&m->link);
 		action_list_free(&m->actions);
 		zfree(m);
+	}
+
+	struct gesturebind *g, *g_tmp;
+	wl_list_for_each_safe(g, g_tmp, &rc.gesturebinds, link) {
+		wl_list_remove(&g->link);
+		action_list_free(&g->actions);
+		zfree(g);
 	}
 
 	struct touch_config_entry *touch_config, *touch_config_tmp;

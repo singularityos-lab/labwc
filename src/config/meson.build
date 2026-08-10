@@ -3,6 +3,7 @@ labwc_sources += files(
   'keybind.c',
   'session.c',
   'mousebind.c',
+  'gesturebind.c',
   'touch.c',
   'tablet.c',
   'tablet-tool.c',

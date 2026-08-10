@@ -178,6 +178,7 @@ this is for compatibility with Openbox.
   <hdr>no</hdr>
   <reuseOutputMode>no</reuseOutputMode>
   <xwaylandPersistence>no</xwaylandPersistence>
+  <windowAnimations>no</windowAnimations>
   <primarySelection>yes</primarySelection>
   <promptCommand>[see details below]</promptCommand>
 </core>
@@ -653,6 +654,11 @@ extending outward from the snapped edge.
 
 	Default is no.
 
+*<core><windowAnimations>* [yes|no]
+
+	Animate minimize, restore, maximize and unmaximize transitions. Default is
+	no.
+
 *<theme><font place="">*
 	The font to use for a specific element of a window, menu or OSD.
 	Places can be any of:
@@ -988,6 +994,20 @@ input-devices by the Wayland protocol.
 	allowing user specific binds.  Note that if no rc.xml is found, or if no
 	<mouse><mousebind> entries exist, the same default mousebinds will be
 	loaded even if the <default /> element is not provided.
+
+*<mouse><gesturebind type="swipe" fingers="" direction="" threshold="">*
+	Bind a touchpad swipe to one or more actions. Directions are Up, Down,
+	Left and Right. The default threshold is 80 logical pixels. A configured
+	direction is handled by labwc; other directions with the same finger count
+	are forwarded to the focused client.
+
+```
+<mouse>
+  <gesturebind type="swipe" fingers="3" direction="Left">
+    <action name="GoToDesktop" to="right" />
+  </gesturebind>
+</mouse>
+```
 
 ## TOUCH
 
