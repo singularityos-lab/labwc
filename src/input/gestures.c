@@ -127,6 +127,10 @@ handle_swipe_update(struct wl_listener *listener, void *data)
 					|| seat->swipe.direction == LAB_DIRECTION_RIGHT)) {
 				seat->swipe.workspace_gesture = workspaces_swipe_begin(
 					seat->swipe.direction);
+				if (seat->swipe.workspace_gesture) {
+					singularity_gesture_send_begin(seat->swipe.fingers,
+						seat->swipe.direction);
+				}
 			} else if (singularity_gesture_has_clients()) {
 				seat->swipe.shell_gesture = true;
 				singularity_gesture_send_begin(seat->swipe.fingers,
@@ -147,6 +151,7 @@ handle_swipe_update(struct wl_listener *listener, void *data)
 
 	if (seat->swipe.workspace_gesture) {
 		workspaces_swipe_update(seat->swipe.dx);
+		singularity_gesture_send_update(seat->swipe.dx, 0);
 	} else if (seat->swipe.shell_gesture) {
 		singularity_gesture_send_update(seat->swipe.dx, seat->swipe.dy);
 	}
@@ -187,6 +192,7 @@ handle_swipe_end(struct wl_listener *listener, void *data)
 				seat->swipe.direction, seat->swipe.dx, seat->swipe.dy);
 		bool commit = bind != NULL;
 		if (seat->swipe.workspace_gesture) {
+			singularity_gesture_send_end(false, commit);
 			workspaces_swipe_end(commit);
 			handled = true;
 		} else if (seat->swipe.shell_gesture) {
@@ -198,6 +204,7 @@ handle_swipe_end(struct wl_listener *listener, void *data)
 		}
 	}
 	if (event->cancelled && seat->swipe.workspace_gesture) {
+		singularity_gesture_send_end(true, false);
 		workspaces_swipe_end(false);
 		handled = true;
 	} else if (event->cancelled && seat->swipe.shell_gesture) {

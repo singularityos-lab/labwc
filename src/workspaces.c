@@ -22,6 +22,7 @@
 #include "foreign-toplevel/foreign.h"
 #include "labwc.h"
 #include "output.h"
+#include "protocols/singularity-gesture.h"
 #include "show-desktop.h"
 #include "theme.h"
 #include "view.h"
@@ -501,7 +502,9 @@ workspaces_switch_to(struct workspace *target, bool update_focus)
 	}
 
 	/* And finally show the OSD */
-	_osd_show();
+	if (!singularity_gesture_has_clients()) {
+		_osd_show();
+	}
 
 	/*
 	 * Make sure we are not carrying around a
