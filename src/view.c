@@ -1648,6 +1648,10 @@ void
 view_set_ssd_mode(struct view *view, enum lab_ssd_mode mode)
 {
 	assert(view);
+	if (mode == LAB_SSD_MODE_NONE && !view->fullscreen
+			&& rc.theme && rc.theme->border_width > 0) {
+		mode = LAB_SSD_MODE_BORDER;
+	}
 
 	if (view->shaded || view->fullscreen
 			|| mode == view->ssd_mode) {

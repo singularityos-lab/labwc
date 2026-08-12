@@ -72,7 +72,7 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 		view->tiled = LAB_EDGE_TOP | LAB_EDGE_BOTTOM
 			| LAB_EDGE_LEFT | LAB_EDGE_RIGHT;
 		view->singularity_scrolling_tiled = true;
-		view_set_decorations(view, LAB_SSD_MODE_NONE, true);
+		view_set_decorations(view, LAB_SSD_MODE_BORDER, true);
 	} else if (view_is_tiled(view)) {
 		struct wlr_box natural = view->natural_geometry;
 		enum lab_ssd_mode ssd_mode = view->singularity_tiling_ssd_mode_valid
