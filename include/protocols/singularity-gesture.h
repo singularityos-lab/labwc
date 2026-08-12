@@ -11,5 +11,9 @@ bool singularity_gesture_has_clients(void);
 void singularity_gesture_send_begin(uint32_t fingers, enum direction direction);
 void singularity_gesture_send_update(double dx, double dy);
 void singularity_gesture_send_end(bool cancelled, bool committed);
+bool singularity_gesture_pinch_begin(uint32_t fingers, double scale);
+void singularity_gesture_pinch_update(double scale);
+void singularity_gesture_pinch_end(bool cancelled);
+void singularity_gesture_finish(void);
 
 #endif /* LABWC_SINGULARITY_GESTURE_H */

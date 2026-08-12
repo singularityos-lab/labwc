@@ -116,6 +116,7 @@ struct seat {
 	struct wl_listener pinch_begin;
 	struct wl_listener pinch_update;
 	struct wl_listener pinch_end;
+	bool pinch_claimed;
 	struct wl_listener swipe_begin;
 	struct wl_listener swipe_update;
 	struct wl_listener swipe_end;
