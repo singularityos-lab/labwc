@@ -26,6 +26,17 @@ struct singularity_tiling_manager {
 
 static struct singularity_tiling_manager *tiling_manager;
 
+static bool
+view_is_tileable(struct view *view)
+{
+	return view && (!view->impl->get_parent || !view->impl->get_parent(view))
+		&& (!view->impl->is_modal_dialog
+			|| !view->impl->is_modal_dialog(view))
+		&& (!view->impl->contains_window_type
+			|| !view->impl->contains_window_type(view,
+				LAB_WINDOW_TYPE_DIALOG));
+}
+
 static struct view *
 view_from_toplevel_resource(struct wl_resource *resource)
 {
@@ -60,6 +71,9 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 		return;
 	}
 	if (tiled) {
+		if (!view_is_tileable(view)) {
+			return;
+		}
 		if (!view->singularity_tiling_ssd_mode_valid) {
 			view->singularity_tiling_ssd_mode = view->ssd_mode;
 			view->singularity_tiling_ssd_mode_valid = true;
@@ -87,6 +101,15 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 	} else {
 		view->singularity_scrolling_tiled = false;
 	}
+}
+
+static void
+handle_get_tileable(struct wl_client *client, struct wl_resource *resource,
+	struct wl_resource *toplevel_resource)
+{
+	struct view *view = view_from_toplevel_resource(toplevel_resource);
+	zsingularity_tiling_manager_v1_send_tileable(resource, toplevel_resource,
+		view_is_tileable(view));
 }
 
 static void
@@ -240,6 +263,7 @@ static const struct zsingularity_tiling_manager_v1_interface manager_impl = {
 	.set_scrolling_mode = handle_set_scrolling_mode,
 	.detach_tiled = handle_detach_tiled,
 	.set_drop_preview = handle_set_drop_preview,
+	.get_tileable = handle_get_tileable,
 };
 
 static void
@@ -272,7 +296,7 @@ singularity_tiling_init(void)
 	}
 	wl_list_init(&tiling_manager->resources);
 	tiling_manager->global = wl_global_create(server.wl_display,
-		&zsingularity_tiling_manager_v1_interface, 6,
+		&zsingularity_tiling_manager_v1_interface, 7,
 		tiling_manager, bind_manager);
 }
 

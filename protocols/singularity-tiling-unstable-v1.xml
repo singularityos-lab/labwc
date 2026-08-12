@@ -4,7 +4,7 @@
     Copyright © 2024 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_tiling_manager_v1" version="6">
+  <interface name="zsingularity_tiling_manager_v1" version="7">
     <description summary="tiling window management">
       This interface allows a client to manage window geometry for tiling purposes.
     </description>
@@ -157,5 +157,21 @@
       <arg name="height" type="int"/>
       <arg name="visible" type="uint"/>
     </request>
+
+    <request name="get_tileable" since="7">
+      <description summary="query whether a toplevel can join the scrolling layout">
+        Requests whether a toplevel is a normal window rather than a dialog
+        or transient child.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+    </request>
+
+    <event name="tileable" since="7">
+      <description summary="reported scrolling layout eligibility">
+        Sent in response to get_tileable.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+      <arg name="tileable" type="uint"/>
+    </event>
   </interface>
 </protocol>
