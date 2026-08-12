@@ -4,7 +4,7 @@
     Copyright 2026 Singularity Desktop contributors
   </copyright>
 
-  <interface name="zsingularity_gesture_manager_v1" version="1">
+  <interface name="zsingularity_gesture_manager_v1" version="2">
     <description summary="desktop gesture progress">
       Reports compositor-owned gestures to the desktop shell so its surfaces
       can follow the user's fingers.
@@ -33,5 +33,13 @@
     </event>
 
     <request name="destroy" type="destructor"/>
+
+    <request name="toggle_desktop_reveal" since="2">
+      <description summary="toggle the animated desktop reveal">
+        Reveals the desktop by moving current-workspace windows toward the
+        screen edges, or restores them to their saved geometry.
+      </description>
+    </request>
+
   </interface>
 </protocol>

@@ -22,6 +22,10 @@ handle_pinch_begin(struct wl_listener *listener, void *data)
 
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
+	seat->pinch_claimed = singularity_gesture_pinch_begin(event->fingers, 1.0);
+	if (seat->pinch_claimed) {
+		return;
+	}
 
 	wlr_pointer_gestures_v1_send_pinch_begin(seat->pointer_gestures,
 		seat->wlr_seat, event->time_msec, event->fingers);
@@ -35,6 +39,10 @@ handle_pinch_update(struct wl_listener *listener, void *data)
 
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
+	if (seat->pinch_claimed) {
+		singularity_gesture_pinch_update(event->scale);
+		return;
+	}
 
 	wlr_pointer_gestures_v1_send_pinch_update(seat->pointer_gestures,
 		seat->wlr_seat, event->time_msec, event->dx, event->dy,
@@ -49,6 +57,11 @@ handle_pinch_end(struct wl_listener *listener, void *data)
 
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
+	if (seat->pinch_claimed) {
+		singularity_gesture_pinch_end(event->cancelled);
+		seat->pinch_claimed = false;
+		return;
+	}
 
 	wlr_pointer_gestures_v1_send_pinch_end(seat->pointer_gestures,
 		seat->wlr_seat, event->time_msec, event->cancelled);
@@ -255,6 +268,7 @@ gestures_init(struct seat *seat)
 void
 gestures_finish(struct seat *seat)
 {
+	singularity_gesture_finish();
 	wl_list_remove(&seat->pinch_begin.link);
 	wl_list_remove(&seat->pinch_update.link);
 	wl_list_remove(&seat->pinch_end.link);
