@@ -1,4 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
+#define _POSIX_C_SOURCE 200809L
 #include <fcntl.h>
 #include <time.h>
 #include <unistd.h>
@@ -13,7 +14,6 @@
 #include "scaled-buffer/scaled-img-buffer.h"
 #include "singularity-splash.h"
 
-#define _POSIX_C_SOURCE 200809L
 #define SINGULARITY_SPLASH_LOGO "/usr/share/singularity/splash-logo.png"
 #define SINGULARITY_SPLASH_MARKER "/run/singularity/compositor-first-frame"
 #define SINGULARITY_SPLASH_LOGO_SIZE 256
