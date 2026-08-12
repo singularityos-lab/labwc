@@ -114,7 +114,7 @@ render_node(struct wlr_render_pass *pass,
 }
 
 static struct wlr_buffer *
-render_snapshot(struct view *view)
+render_snapshot(struct view *view, struct wlr_color_transform *color_transform)
 {
 	struct wlr_box box = ssd_max_extents(view);
 	struct wlr_buffer *buffer = wlr_allocator_create_buffer(server.allocator,
@@ -123,8 +123,11 @@ render_snapshot(struct view *view)
 	if (!buffer) {
 		return NULL;
 	}
+	struct wlr_buffer_pass_options options = {
+		.color_transform = color_transform,
+	};
 	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
-		server.renderer, buffer, NULL);
+		server.renderer, buffer, color_transform ? &options : NULL);
 	if (!pass) {
 		wlr_buffer_drop(buffer);
 		return NULL;
@@ -254,7 +257,7 @@ view_animation_create(struct view *view)
 			|| view->current.width < 1 || view->current.height < 1) {
 		return NULL;
 	}
-	struct wlr_buffer *buffer = render_snapshot(view);
+	struct wlr_buffer *buffer = render_snapshot(view, NULL);
 	if (!buffer) {
 		return NULL;
 	}
@@ -337,4 +340,44 @@ view_animation_cancel(struct view *view)
 	if (view->animation) {
 		finish_animation(view->animation);
 	}
+}
+
+void
+view_close_gesture_set_progress(struct view *view, float progress)
+{
+	assert(view);
+	progress = MAX(0.0f, MIN(1.0f, progress));
+	view->close_gesture_progress = progress;
+	if (progress == 0.0f || !view->mapped || !view->scene_tree
+			|| !output_is_usable(view->output)) {
+		if (view->close_gesture_snapshot) {
+			wlr_scene_node_destroy(&view->close_gesture_snapshot->node);
+			view->close_gesture_snapshot = NULL;
+		}
+		return;
+	}
+	if (!view->close_gesture_snapshot) {
+		static const float grayscale_matrix[9] = {
+			0.2126f, 0.7152f, 0.0722f,
+			0.2126f, 0.7152f, 0.0722f,
+			0.2126f, 0.7152f, 0.0722f,
+		};
+		struct wlr_color_transform *transform =
+			wlr_color_transform_init_matrix(grayscale_matrix);
+		if (!transform) {
+			return;
+		}
+		struct wlr_buffer *buffer = render_snapshot(view, transform);
+		wlr_color_transform_unref(transform);
+		if (!buffer) {
+			return;
+		}
+		view->close_gesture_snapshot = lab_wlr_scene_buffer_create(
+			server.view_animation_tree, buffer);
+		wlr_buffer_drop(buffer);
+	}
+	struct wlr_box box = ssd_max_extents(view);
+	wlr_scene_node_set_position(&view->close_gesture_snapshot->node,
+		box.x, box.y);
+	wlr_scene_buffer_set_opacity(view->close_gesture_snapshot, progress);
 }

@@ -60,6 +60,8 @@ handle_set_geometry(struct wl_client *client, struct wl_resource *resource,
 		.width = width,
 		.height = height,
 	});
+	view_close_gesture_set_progress(view,
+		view->close_gesture_progress);
 }
 
 static void
@@ -110,6 +112,19 @@ handle_get_tileable(struct wl_client *client, struct wl_resource *resource,
 	struct view *view = view_from_toplevel_resource(toplevel_resource);
 	zsingularity_tiling_manager_v1_send_tileable(resource, toplevel_resource,
 		view_is_tileable(view));
+}
+
+static void
+handle_set_close_gesture_progress(struct wl_client *client,
+	struct wl_resource *resource, struct wl_resource *toplevel_resource,
+	wl_fixed_t progress)
+{
+	struct view *view = view_from_toplevel_resource(toplevel_resource);
+	if (!view) {
+		return;
+	}
+	view_close_gesture_set_progress(view,
+		(float)wl_fixed_to_double(progress));
 }
 
 static void
@@ -264,6 +279,7 @@ static const struct zsingularity_tiling_manager_v1_interface manager_impl = {
 	.detach_tiled = handle_detach_tiled,
 	.set_drop_preview = handle_set_drop_preview,
 	.get_tileable = handle_get_tileable,
+	.set_close_gesture_progress = handle_set_close_gesture_progress,
 };
 
 static void
@@ -296,7 +312,7 @@ singularity_tiling_init(void)
 	}
 	wl_list_init(&tiling_manager->resources);
 	tiling_manager->global = wl_global_create(server.wl_display,
-		&zsingularity_tiling_manager_v1_interface, 7,
+		&zsingularity_tiling_manager_v1_interface, 8,
 		tiling_manager, bind_manager);
 }
 

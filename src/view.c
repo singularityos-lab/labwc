@@ -1722,6 +1722,7 @@ view_set_fullscreen(struct view *view, bool fullscreen)
 		return;
 	}
 	view_animation_cancel(view);
+	view_close_gesture_set_progress(view, 0.0f);
 	if (fullscreen) {
 		if (!output_is_usable(view->output)) {
 			/* Prevent fullscreen with no available outputs */
@@ -2527,6 +2528,7 @@ view_destroy(struct view *view)
 {
 	assert(view);
 	view_animation_cancel(view);
+	view_close_gesture_set_progress(view, 0.0f);
 
 	wl_signal_emit_mutable(&view->events.destroy, NULL);
 	snap_constraints_invalidate(view);

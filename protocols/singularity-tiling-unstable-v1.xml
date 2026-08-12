@@ -4,7 +4,7 @@
     Copyright © 2024 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_tiling_manager_v1" version="7">
+  <interface name="zsingularity_tiling_manager_v1" version="8">
     <description summary="tiling window management">
       This interface allows a client to manage window geometry for tiling purposes.
     </description>
@@ -173,5 +173,14 @@
       <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
       <arg name="tileable" type="uint"/>
     </event>
+
+    <request name="set_close_gesture_progress" since="8">
+      <description summary="set the close gesture visual progress">
+        Desaturates a toplevel as it approaches the close threshold. A value
+        of zero clears the effect.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+      <arg name="progress" type="fixed"/>
+    </request>
   </interface>
 </protocol>

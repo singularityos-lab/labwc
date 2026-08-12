@@ -174,6 +174,8 @@ struct view {
 	struct wlr_scene_tree *scene_tree;
 	struct wlr_scene_tree *content_tree; /* may be NULL for unmapped view */
 	struct view_animation *animation;
+	struct wlr_scene_buffer *close_gesture_snapshot;
+	float close_gesture_progress;
 
 	/* These are never NULL and an empty string is set instead. */
 	char *title;
