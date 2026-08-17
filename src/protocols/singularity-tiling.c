@@ -202,12 +202,14 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 		view->singularity_scrolling_tiled = true;
 		view_set_decorations(view, LAB_SSD_MODE_BORDER, true);
 		view_notify_tiled(view);
+		view_update_scrolling_clip(view);
 	} else if (view_is_tiled(view)) {
 		struct wlr_box natural = view->natural_geometry;
 		enum lab_ssd_mode ssd_mode = view->singularity_tiling_ssd_mode_valid
 			? view->singularity_tiling_ssd_mode : LAB_SSD_MODE_FULL;
 		view->singularity_tiling_ssd_mode_valid = false;
 		view->singularity_scrolling_tiled = false;
+		view_update_scrolling_clip(view);
 		view_set_untiled(view);
 		view_set_decorations(view, ssd_mode, true);
 		if (!wlr_box_empty(&natural)) {
@@ -215,6 +217,7 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 		}
 	} else {
 		view->singularity_scrolling_tiled = false;
+		view_update_scrolling_clip(view);
 	}
 }
 
@@ -286,6 +289,7 @@ handle_detach_tiled(struct wl_client *client, struct wl_resource *resource,
 		? view->singularity_tiling_ssd_mode : LAB_SSD_MODE_FULL;
 	view->singularity_tiling_ssd_mode_valid = false;
 	view->singularity_scrolling_tiled = false;
+	view_update_scrolling_clip(view);
 	view_set_untiled(view);
 	view->natural_geometry = geometry;
 	view_set_decorations(view, ssd_mode, true);
