@@ -497,47 +497,6 @@ view_set_output(struct view *view, struct output *output)
 	if (view->fullscreen) {
 		desktop_update_top_layer_visibility();
 	}
-	view_update_scrolling_clip(view);
-}
-
-void
-view_update_scrolling_clip(struct view *view)
-{
-	if (!view->content_tree) {
-		return;
-	}
-	if (!view->singularity_scrolling_tiled
-			|| !output_is_usable(view->output)) {
-		wlr_scene_subsurface_tree_set_clip(
-			&view->content_tree->node, NULL);
-		wlr_scene_node_set_enabled(&view->content_tree->node,
-			!view->shaded);
-		ssd_set_visible(view->ssd, true);
-		return;
-	}
-
-	struct wlr_box output_box;
-	wlr_output_layout_get_box(server.output_layout,
-		view->output->wlr_output, &output_box);
-	struct wlr_box visible;
-	if (!wlr_box_intersection(&visible, &view->current, &output_box)) {
-		wlr_scene_node_set_enabled(&view->content_tree->node, false);
-		ssd_set_visible(view->ssd, false);
-		return;
-	}
-
-	struct wlr_box clip = {
-		.x = visible.x - view->current.x,
-		.y = visible.y - view->current.y,
-		.width = visible.width,
-		.height = visible.height,
-	};
-	wlr_scene_node_set_enabled(&view->content_tree->node, !view->shaded);
-	wlr_scene_subsurface_tree_set_clip(&view->content_tree->node, &clip);
-	ssd_set_visible(view->ssd,
-		visible.x == view->current.x && visible.y == view->current.y
-		&& visible.width == view->current.width
-		&& visible.height == view->current.height);
 }
 
 void
@@ -604,7 +563,6 @@ view_moved(struct view *view)
 		view_discover_output(view, NULL);
 	}
 	view_update_outputs(view);
-	view_update_scrolling_clip(view);
 	ssd_update_geometry(view->ssd);
 	cursor_update_focus();
 	if (rc.resize_indicator && server.grabbed_view == view) {
@@ -1374,6 +1332,8 @@ view_apply_special_geometry(struct view *view)
 		view_apply_fullscreen_geometry(view);
 	} else if (view->maximized != VIEW_AXIS_NONE) {
 		view_apply_maximized_geometry(view);
+	} else if (view->singularity_scrolling_tiled) {
+		return;
 	} else if (view->tiled) {
 		view_apply_tiled_geometry(view);
 	} else if (view->tiled_region || view->tiled_region_evacuate) {
@@ -1443,7 +1403,7 @@ view_is_floating(struct view *view)
 		|| view_is_tiled(view));
 }
 
-static void
+void
 view_notify_tiled(struct view *view)
 {
 	assert(view);

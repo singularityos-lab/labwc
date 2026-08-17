@@ -480,7 +480,7 @@ bool view_inhibits_actions(struct view *view, struct wl_list *actions);
 
 void view_set_activated(struct view *view, bool activated);
 void view_set_output(struct view *view, struct output *output);
-void view_update_scrolling_clip(struct view *view);
+void view_notify_tiled(struct view *view);
 void view_close(struct view *view);
 
 /**

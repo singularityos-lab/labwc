@@ -1572,7 +1572,7 @@ rcxml_init(void)
 	rc.show_title = true;
 	rc.title_layout_loaded = false;
 	rc.ssd_keep_border = true;
-	rc.corner_radius = 8;
+	rc.corner_radius = 12;
 	rc.shadows_enabled = false;
 	rc.shadows_on_tiled = false;
 

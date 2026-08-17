@@ -145,6 +145,9 @@ reload_config_and_theme(void)
 	struct view *view;
 	wl_list_for_each(view, &server.views, link) {
 		view_reload_ssd(view);
+		if (view->singularity_scrolling_tiled) {
+			view_notify_tiled(view);
+		}
 	}
 
 	cycle_finish(/*switch_focus*/ false);

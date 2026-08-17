@@ -2,6 +2,8 @@
 
 #include <assert.h>
 #include <wlr/types/wlr_scene.h>
+#include "buffer.h"
+#include "common/graphic-helpers.h"
 #include "common/macros.h"
 #include "common/scene-helpers.h"
 #include "config/rcxml.h"
@@ -9,6 +11,70 @@
 #include "ssd-internal.h"
 #include "theme.h"
 #include "view.h"
+
+enum border_corner {
+	BORDER_CORNER_TOP_LEFT,
+	BORDER_CORNER_TOP_RIGHT,
+	BORDER_CORNER_BOTTOM_LEFT,
+	BORDER_CORNER_BOTTOM_RIGHT,
+};
+
+static struct lab_data_buffer *
+create_border_corner(const float color[static 4], enum border_corner corner)
+{
+	int size = rc.corner_radius + rc.theme->border_width;
+	struct lab_data_buffer *buffer = buffer_create_cairo(size, size, 1);
+	cairo_t *cairo = cairo_create(buffer->surface);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
+	cairo_paint(cairo);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+	set_cairo_color(cairo, color);
+	double half = rc.theme->border_width / 2.0;
+	double radius = size - half;
+	double cx = 0;
+	double cy = 0;
+	double start = 0;
+	double end = 0;
+	switch (corner) {
+	case BORDER_CORNER_TOP_LEFT:
+		cx = size;
+		cy = size;
+		start = G_PI;
+		end = 1.5 * G_PI;
+		break;
+	case BORDER_CORNER_TOP_RIGHT:
+		cy = size;
+		start = 1.5 * G_PI;
+		end = 2 * G_PI;
+		break;
+	case BORDER_CORNER_BOTTOM_LEFT:
+		cx = size;
+		start = 0.5 * G_PI;
+		end = G_PI;
+		break;
+	case BORDER_CORNER_BOTTOM_RIGHT:
+		start = 0;
+		end = 0.5 * G_PI;
+		break;
+	}
+	cairo_set_line_width(cairo, rc.theme->border_width);
+	cairo_arc(cairo, cx, cy, radius, start, end);
+	cairo_stroke(cairo);
+	cairo_surface_flush(buffer->surface);
+	cairo_destroy(cairo);
+	return buffer;
+}
+
+static struct wlr_scene_buffer *
+add_border_corner(struct wlr_scene_tree *parent,
+	const float color[static 4], enum border_corner corner)
+{
+	struct lab_data_buffer *buffer = create_border_corner(color, corner);
+	struct wlr_scene_buffer *scene_buffer =
+		lab_wlr_scene_buffer_create(parent, &buffer->base);
+	wlr_buffer_drop(&buffer->base);
+	return scene_buffer;
+}
 
 void
 ssd_border_create(struct ssd *ssd)
@@ -53,6 +119,15 @@ ssd_border_create(struct ssd *ssd)
 		wlr_scene_node_set_position(&subtree->top->node,
 			theme->border_width + corner_width,
 			-(ssd->titlebar.height + theme->border_width));
+
+		subtree->top_left = add_border_corner(parent, color,
+			BORDER_CORNER_TOP_LEFT);
+		subtree->top_right = add_border_corner(parent, color,
+			BORDER_CORNER_TOP_RIGHT);
+		subtree->bottom_left = add_border_corner(parent, color,
+			BORDER_CORNER_BOTTOM_LEFT);
+		subtree->bottom_right = add_border_corner(parent, color,
+			BORDER_CORNER_BOTTOM_RIGHT);
 	}
 
 	if (view->maximized == VIEW_AXIS_BOTH) {
@@ -96,6 +171,9 @@ ssd_border_update(struct ssd *ssd)
 	int height = view_effective_height(view, /* use_pending */ false);
 	int full_width = width + 2 * theme->border_width;
 	int corner_width = ssd_get_corner_width();
+	bool scrolling_rounded = view->singularity_scrolling_tiled
+		&& rc.corner_radius > 0 && theme->border_width > 0;
+	int scrolling_corner_size = rc.corner_radius + theme->border_width;
 
 	/*
 	 * From here on we have to cover the following border scenarios:
@@ -116,16 +194,24 @@ ssd_border_update(struct ssd *ssd)
 	 *  |_______________|
 	 */
 
-	int side_height = ssd->state.was_squared
+	int side_height = scrolling_rounded
+		? MAX(height - 2 * rc.corner_radius, 0)
+		: ssd->state.was_squared
 		? height + ssd->titlebar.height
 		: height;
-	int side_y = ssd->state.was_squared
+	int side_y = scrolling_rounded
+		? rc.corner_radius
+		: ssd->state.was_squared
 		? -ssd->titlebar.height
 		: 0;
-	int top_width = ssd->titlebar.height <= 0 || ssd->state.was_squared
+	int top_width = scrolling_rounded
+		? MAX(full_width - 2 * scrolling_corner_size, 0)
+		: ssd->titlebar.height <= 0 || ssd->state.was_squared
 		? full_width
 		: MAX(width - 2 * corner_width, 0);
-	int top_x = ssd->titlebar.height <= 0 || ssd->state.was_squared
+	int top_x = scrolling_rounded
+		? scrolling_corner_size
+		: ssd->titlebar.height <= 0 || ssd->state.was_squared
 		? 0
 		: theme->border_width + corner_width;
 
@@ -144,14 +230,37 @@ ssd_border_update(struct ssd *ssd)
 			theme->border_width + width, side_y);
 
 		wlr_scene_rect_set_size(subtree->bottom,
-			full_width, theme->border_width);
+			scrolling_rounded ? top_width : full_width,
+			theme->border_width);
 		wlr_scene_node_set_position(&subtree->bottom->node,
-			0, height);
+			scrolling_rounded ? top_x : 0, height);
 
 		wlr_scene_rect_set_size(subtree->top,
 			top_width, theme->border_width);
 		wlr_scene_node_set_position(&subtree->top->node,
 			top_x, -(ssd->titlebar.height + theme->border_width));
+
+		wlr_scene_node_set_enabled(&subtree->top_left->node,
+			scrolling_rounded);
+		wlr_scene_node_set_enabled(&subtree->top_right->node,
+			scrolling_rounded);
+		wlr_scene_node_set_enabled(&subtree->bottom_left->node,
+			scrolling_rounded);
+		wlr_scene_node_set_enabled(&subtree->bottom_right->node,
+			scrolling_rounded);
+		if (scrolling_rounded) {
+			int right_x = full_width - scrolling_corner_size;
+			int bottom_y = height + theme->border_width
+				- scrolling_corner_size;
+			wlr_scene_node_set_position(&subtree->top_left->node,
+				0, -theme->border_width);
+			wlr_scene_node_set_position(&subtree->top_right->node,
+				right_x, -theme->border_width);
+			wlr_scene_node_set_position(&subtree->bottom_left->node,
+				0, bottom_y);
+			wlr_scene_node_set_position(&subtree->bottom_right->node,
+				right_x, bottom_y);
+		}
 	}
 }
 

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "protocols/singularity-tiling.h"
-#include <math.h>
 #include <stdlib.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
@@ -89,14 +88,13 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 			| LAB_EDGE_LEFT | LAB_EDGE_RIGHT;
 		view->singularity_scrolling_tiled = true;
 		view_set_decorations(view, LAB_SSD_MODE_BORDER, true);
-		view_update_scrolling_clip(view);
+		view_notify_tiled(view);
 	} else if (view_is_tiled(view)) {
 		struct wlr_box natural = view->natural_geometry;
 		enum lab_ssd_mode ssd_mode = view->singularity_tiling_ssd_mode_valid
 			? view->singularity_tiling_ssd_mode : LAB_SSD_MODE_FULL;
 		view->singularity_tiling_ssd_mode_valid = false;
 		view->singularity_scrolling_tiled = false;
-		view_update_scrolling_clip(view);
 		view_set_untiled(view);
 		view_set_decorations(view, ssd_mode, true);
 		if (!wlr_box_empty(&natural)) {
@@ -104,7 +102,6 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 		}
 	} else {
 		view->singularity_scrolling_tiled = false;
-		view_update_scrolling_clip(view);
 	}
 }
 
@@ -172,7 +169,6 @@ handle_detach_tiled(struct wl_client *client, struct wl_resource *resource,
 		? view->singularity_tiling_ssd_mode : LAB_SSD_MODE_FULL;
 	view->singularity_tiling_ssd_mode_valid = false;
 	view->singularity_scrolling_tiled = false;
-	view_update_scrolling_clip(view);
 	view_set_untiled(view);
 	view->natural_geometry = geometry;
 	view_set_decorations(view, ssd_mode, true);
@@ -255,6 +251,63 @@ handle_get_workarea(struct wl_client *client, struct wl_resource *resource,
 }
 
 static void
+handle_get_layout_workarea(struct wl_client *client,
+	struct wl_resource *resource)
+{
+	bool found = false;
+	int left = 0;
+	int right = 0;
+	int top = 0;
+	int bottom = 0;
+	struct output *output;
+	wl_list_for_each(output, &server.outputs, link) {
+		if (!output_is_usable(output)) {
+			continue;
+		}
+		struct wlr_box box =
+			output_usable_area_in_layout_coords(output);
+		if (!found) {
+			left = box.x;
+			right = box.x + box.width;
+			top = box.y;
+			bottom = box.y + box.height;
+			found = true;
+			continue;
+		}
+		left = left < box.x ? left : box.x;
+		right = right > box.x + box.width
+			? right : box.x + box.width;
+		top = top < box.y ? top : box.y;
+		bottom = bottom > box.y + box.height
+			? bottom : box.y + box.height;
+	}
+	if (!found) {
+		return;
+	}
+	zsingularity_tiling_manager_v1_send_layout_workarea(resource,
+		left, top, right - left, bottom - top);
+	wl_list_for_each(output, &server.outputs, link) {
+		if (!output_is_usable(output)) {
+			continue;
+		}
+		struct wlr_box box =
+			output_usable_area_in_layout_coords(output);
+		zsingularity_tiling_manager_v1_send_layout_output_workarea(
+			resource, box.x, box.y, box.width, box.height);
+	}
+	zsingularity_tiling_manager_v1_send_layout_workarea_done(resource);
+}
+
+static void
+handle_get_cursor_position(struct wl_client *client,
+	struct wl_resource *resource)
+{
+	zsingularity_tiling_manager_v1_send_cursor_position(resource,
+		(int32_t)round(server.seat.cursor->x),
+		(int32_t)round(server.seat.cursor->y));
+}
+
+static void
 handle_move_to_workspace(struct wl_client *client, struct wl_resource *resource,
 	struct wl_resource *toplevel_resource, uint32_t workspace_index)
 {
@@ -284,6 +337,8 @@ static const struct zsingularity_tiling_manager_v1_interface manager_impl = {
 	.set_drop_preview = handle_set_drop_preview,
 	.get_tileable = handle_get_tileable,
 	.set_close_gesture_progress = handle_set_close_gesture_progress,
+	.get_layout_workarea = handle_get_layout_workarea,
+	.get_cursor_position = handle_get_cursor_position,
 };
 
 static void
@@ -316,7 +371,7 @@ singularity_tiling_init(void)
 	}
 	wl_list_init(&tiling_manager->resources);
 	tiling_manager->global = wl_global_create(server.wl_display,
-		&zsingularity_tiling_manager_v1_interface, 8,
+		&zsingularity_tiling_manager_v1_interface, 10,
 		tiling_manager, bind_manager);
 }
 

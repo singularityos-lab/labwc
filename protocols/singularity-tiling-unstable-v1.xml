@@ -4,7 +4,7 @@
     Copyright © 2024 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_tiling_manager_v1" version="8">
+  <interface name="zsingularity_tiling_manager_v1" version="10">
     <description summary="tiling window management">
       This interface allows a client to manage window geometry for tiling purposes.
     </description>
@@ -182,5 +182,52 @@
       <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
       <arg name="progress" type="fixed"/>
     </request>
+
+    <request name="get_layout_workarea" since="9">
+      <description summary="query the combined output work area">
+        Requests the common usable area across the output layout so a scrolling
+        layout can span every output as one continuous viewport.
+      </description>
+    </request>
+
+    <event name="layout_workarea" since="9">
+      <description summary="reported combined output work area">
+        Sent in response to get_layout_workarea.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+
+    <event name="layout_output_workarea" since="9">
+      <description summary="reported output work area">
+        Reports one usable output rectangle within the combined layout.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+
+    <event name="layout_workarea_done" since="9">
+      <description summary="layout work area report complete">
+        Sent after every output work area has been reported.
+      </description>
+    </event>
+
+    <request name="get_cursor_position" since="10">
+      <description summary="query cursor position">
+        Requests the current cursor position in output layout coordinates.
+      </description>
+    </request>
+
+    <event name="cursor_position" since="10">
+      <description summary="reported cursor position">
+        Sent in response to get_cursor_position.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+    </event>
   </interface>
 </protocol>
