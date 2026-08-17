@@ -251,6 +251,14 @@ ssd_update_geometry(struct ssd *ssd)
 }
 
 void
+ssd_set_visible(struct ssd *ssd, bool visible)
+{
+	if (ssd) {
+		wlr_scene_node_set_enabled(&ssd->tree->node, visible);
+	}
+}
+
+void
 ssd_set_titlebar(struct ssd *ssd, bool enabled)
 {
 	if (!ssd || ssd->titlebar.tree->node.enabled == enabled) {
