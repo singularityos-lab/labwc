@@ -28,6 +28,9 @@
 #include "input/keyboard.h"
 #include "input/tablet.h"
 #include "input/touch.h"
+#include <linux/input-event-codes.h>
+#include "group.h"
+#include "node.h"
 #include "labwc.h"
 #include "layers.h"
 #include "menu/menu.h"
@@ -1205,6 +1208,36 @@ cursor_process_button_press(struct seat *seat, uint32_t button, uint32_t time_ms
 		desktop_focus_view_or_surface(seat, NULL, ctx.surface,
 			/*raise*/ false);
 #endif
+	}
+
+	if (ctx.type == LAB_NODE_GROUP_TAB || ctx.type == LAB_NODE_GROUP_BAR) {
+		if (button == BTN_LEFT) {
+			if (ctx.type == LAB_NODE_GROUP_TAB) {
+				view_group_activate_from_node(ctx.node);
+			} else {
+				struct view *anchor =
+					view_group_bar_view(ctx.node);
+				if (!anchor) {
+					anchor = ctx.view;
+				}
+				if (!anchor) {
+					/* nothing to drag */
+				} else if (is_double_click(rc.doubleclick_time,
+						button, &ctx)) {
+					view_group_toggle_spread(anchor);
+				} else {
+					desktop_focus_view(anchor,
+						/* raise */ true);
+					interactive_begin(anchor,
+						LAB_INPUT_STATE_MOVE,
+						LAB_EDGE_NONE);
+				}
+			}
+		} else if (button == BTN_MIDDLE && ctx.type == LAB_NODE_GROUP_TAB) {
+			view_group_leave(node_view_from_node(ctx.node));
+		}
+		lab_set_add(&seat->bound_buttons, button);
+		return false;
 	}
 
 	if (ctx.type != LAB_NODE_CLIENT && ctx.type != LAB_NODE_LAYER_SURFACE

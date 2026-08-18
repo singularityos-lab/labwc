@@ -22,6 +22,7 @@
 #include "debug.h"
 #include "input/keyboard.h"
 #include "input/key-state.h"
+#include "group.h"
 #include "labwc.h"
 #include "magnifier.h"
 #include "menu/menu.h"
@@ -98,6 +99,11 @@ struct action_arg_list {
 	X(TOGGLE_ALWAYS_ON_BOTTOM, "ToggleAlwaysOnBottom") \
 	X(TOGGLE_OMNIPRESENT, "ToggleOmnipresent") \
 	X(FOCUS, "Focus") \
+	X(GROUP_WITH_LAST, "GroupWithLast") \
+	X(UNGROUP, "Ungroup") \
+	X(GROUP_NEXT, "GroupNext") \
+	X(GROUP_PREVIOUS, "GroupPrevious") \
+	X(TOGGLE_GROUP_SPREAD, "ToggleGroupSpread") \
 	X(UNFOCUS, "Unfocus") \
 	X(ICONIFY, "Iconify") \
 	X(RAISE, "Raise") \
@@ -1218,6 +1224,34 @@ run_action(struct view *view, struct action *action,
 	case ACTION_TYPE_TOGGLE_ALWAYS_ON_TOP:
 		if (view) {
 			view_toggle_always_on_top(view);
+		}
+		break;
+	case ACTION_TYPE_GROUP_WITH_LAST:
+		if (view) {
+			struct view *partner = view_group_pick_partner(view);
+			if (partner) {
+				view_group_join(view, partner);
+			}
+		}
+		break;
+	case ACTION_TYPE_UNGROUP:
+		if (view) {
+			view_group_leave(view);
+		}
+		break;
+	case ACTION_TYPE_GROUP_NEXT:
+		if (view) {
+			view_group_cycle(view, 1);
+		}
+		break;
+	case ACTION_TYPE_GROUP_PREVIOUS:
+		if (view) {
+			view_group_cycle(view, -1);
+		}
+		break;
+	case ACTION_TYPE_TOGGLE_GROUP_SPREAD:
+		if (view) {
+			view_group_toggle_spread(view);
 		}
 		break;
 	case ACTION_TYPE_TOGGLE_ALWAYS_ON_BOTTOM:

@@ -46,6 +46,10 @@ node_type_parse(const char *context)
 		return LAB_NODE_FRAME;
 	} else if (!strcasecmp(context, "Client")) {
 		return LAB_NODE_CLIENT;
+	} else if (!strcasecmp(context, "GroupBar")) {
+		return LAB_NODE_GROUP_BAR;
+	} else if (!strcasecmp(context, "GroupTab")) {
+		return LAB_NODE_GROUP_TAB;
 	} else if (!strcasecmp(context, "Desktop")) {
 		return LAB_NODE_ROOT;
 	} else if (!strcasecmp(context, "Root")) {

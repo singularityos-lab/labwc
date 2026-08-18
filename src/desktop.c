@@ -11,6 +11,7 @@
 #include "common/scene-helpers.h"
 #include "config/rcxml.h"
 #include "dnd.h"
+#include "group.h"
 #include "labwc.h"
 #include "layers.h"
 #include "node.h"
@@ -132,6 +133,11 @@ desktop_focus_view_internal(struct view *view, bool raise, bool allow_delay)
 		 * function again (with raise=true).
 		 */
 		view_minimize(view, false);
+		return;
+	}
+
+	if (view_group_is_hidden(view)) {
+		view_group_activate(view);
 		return;
 	}
 
@@ -379,6 +385,12 @@ get_cursor_context(void)
 			case LAB_NODE_SESSION_LOCK_SURFACE:
 			case LAB_NODE_IME_POPUP:
 				ret.type = LAB_NODE_CLIENT;
+				return ret;
+			case LAB_NODE_GROUP_BAR:
+			case LAB_NODE_GROUP_TAB:
+				ret.node = node;
+				ret.view = desc->view;
+				ret.type = desc->type;
 				return ret;
 			case LAB_NODE_MENUITEM:
 				/* Always return the top scene node for menu items */

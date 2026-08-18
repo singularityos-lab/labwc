@@ -25,6 +25,7 @@ bool singularity_tiling_float_candidate(struct view *view);
 bool singularity_tiling_get_float_drop_box(struct view *view,
 	struct wlr_box *box);
 bool singularity_tiling_get_drop_preview_box(struct wlr_box *box);
+void singularity_tiling_send_group_state(struct view *view);
 void singularity_tiling_send_interaction(struct view *view,
 	enum singularity_tiling_interaction_phase phase,
 	enum singularity_tiling_interaction_kind kind,
