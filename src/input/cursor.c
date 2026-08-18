@@ -1168,6 +1168,7 @@ bool
 cursor_process_button_press(struct seat *seat, uint32_t button, uint32_t time_msec)
 {
 	struct cursor_context ctx = get_cursor_context();
+	struct view *active_before = server.active_view;
 
 	/* Used on next button release to check if it can close menu or select menu item */
 	press_msec = time_msec;
@@ -1226,6 +1227,12 @@ cursor_process_button_press(struct seat *seat, uint32_t button, uint32_t time_ms
 		process_press_mousebinding(&ctx, button);
 
 	if (ctx.surface && !consumed_by_frame_context) {
+		if (ctx.type == LAB_NODE_CLIENT && ctx.view
+				&& ctx.view != active_before
+				&& ctx.view == server.active_view) {
+			lab_set_add(&seat->bound_buttons, button);
+			return false;
+		}
 		/* Notify client with pointer focus of button press */
 		return true;
 	}
