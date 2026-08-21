@@ -33,6 +33,7 @@
 #include "node.h"
 #include "output-state.h"
 #include "output-virtual.h"
+#include "protocols/singularity-pip.h"
 #include "regions.h"
 #include "session-lock.h"
 #include "view.h"
@@ -264,11 +265,13 @@ handle_output_frame(struct wl_listener *listener, void *data)
 
 	pending->tearing_page_flip = output_get_tearing_allowance(output);
 
+	singularity_pip_render_output(output);
 	lab_wlr_scene_output_commit(scene_output, pending);
 
 	struct timespec now = { 0 };
 	clock_gettime(CLOCK_MONOTONIC, &now);
 	wlr_scene_output_send_frame_done(output->scene_output, &now);
+	singularity_pip_send_frame_done(output, &now);
 }
 
 static void
@@ -282,6 +285,7 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 		overlay_finish(seat);
 	}
 	wl_list_remove(&output->link);
+	singularity_pip_output_destroy(output);
 	wl_list_remove(&output->frame.link);
 	wl_list_remove(&output->destroy.link);
 	wl_list_remove(&output->request_state.link);

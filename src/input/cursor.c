@@ -38,6 +38,7 @@
 #include "resistance.h"
 #include "resize-outlines.h"
 #include "protocols/singularity-tiling.h"
+#include "protocols/singularity-pip.h"
 #include "ssd.h"
 #include "view.h"
 #include "xwayland.h"
@@ -669,6 +670,20 @@ cursor_process_motion(uint32_t time, double *sx, double *sy)
 	/* Otherwise, find view under the pointer and send the event along */
 	struct cursor_context ctx = get_cursor_context();
 	struct seat *seat = &server.seat;
+	enum singularity_pip_cursor_area pip_area =
+		singularity_pip_cursor_area(ctx.node);
+	if (pip_area != SINGULARITY_PIP_CURSOR_NONE) {
+		singularity_pip_cursor_motion(seat->cursor->x, seat->cursor->y);
+		wlr_seat_pointer_notify_clear_focus(seat->wlr_seat);
+		cursor_context_save(&seat->last_cursor_ctx, NULL);
+		cursor_set(seat, pip_area == SINGULARITY_PIP_CURSOR_RESIZE
+			? LAB_CURSOR_RESIZE_SE
+			: pip_area == SINGULARITY_PIP_CURSOR_CONTENT
+				? LAB_CURSOR_GRAB : LAB_CURSOR_DEFAULT);
+		*sx = 0;
+		*sy = 0;
+		return false;
+	}
 
 	if (ctx.type == LAB_NODE_MENUITEM) {
 		menu_process_cursor_motion(ctx.node);
@@ -1175,6 +1190,12 @@ cursor_process_button_press(struct seat *seat, uint32_t button, uint32_t time_ms
 
 	/* Used on next button release to check if it can close menu or select menu item */
 	press_msec = time_msec;
+	if (singularity_pip_button_press(ctx.node, button,
+			seat->cursor->x, seat->cursor->y)) {
+		wlr_seat_pointer_notify_clear_focus(seat->wlr_seat);
+		lab_set_add(&seat->bound_buttons, button);
+		return false;
+	}
 
 	if (ctx.view || ctx.surface) {
 		/* Store cursor context for later action processing */
@@ -1280,6 +1301,10 @@ cursor_process_button_release(struct seat *seat, uint32_t button,
 {
 	struct cursor_context ctx = get_cursor_context();
 	struct wlr_surface *pressed_surface = seat->pressed.ctx.surface;
+	if (singularity_pip_button_release(button)) {
+		cursor_context_save(&seat->pressed, NULL);
+		return false;
+	}
 
 	/* Always notify button release event when it's not bound */
 	const bool notify = !lab_set_contains(&seat->bound_buttons, button);

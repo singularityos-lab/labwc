@@ -14,6 +14,7 @@
 #include "theme.h"
 #include "view.h"
 
+#define DROP_ZONE_MIN 16
 #define TAB_GAP 2
 #define TAB_PADDING 8
 #define TAB_MAX_WIDTH 200
@@ -544,6 +545,43 @@ view_group_bar_view(struct wlr_scene_node *node)
 		return NULL;
 	}
 	return view_group_anchor(desc->data);
+}
+
+struct view *
+view_group_drop_target(struct view *dragged, double x, double y)
+{
+	if (!dragged) {
+		return NULL;
+	}
+	struct view *view;
+	for_each_view(view, &server.views,
+			LAB_VIEW_CRITERIA_CURRENT_WORKSPACE) {
+		if (view == dragged || view->minimized
+				|| view_group_is_hidden(view)) {
+			continue;
+		}
+		struct wlr_box box = view->current;
+		if (box.width < 4 * DROP_ZONE_MIN || box.height < 4 * DROP_ZONE_MIN) {
+			continue;
+		}
+		if (!wlr_box_contains_point(&box, x, y)) {
+			continue;
+		}
+		struct wlr_box zone = {
+			.x = box.x + box.width / 4,
+			.y = box.y + box.height / 4,
+			.width = box.width / 2,
+			.height = box.height / 2,
+		};
+		if (!wlr_box_contains_point(&zone, x, y)) {
+			return NULL;
+		}
+		if (dragged->group && dragged->group == view->group) {
+			return NULL;
+		}
+		return view;
+	}
+	return NULL;
 }
 
 struct view *

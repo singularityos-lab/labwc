@@ -43,6 +43,7 @@ void view_group_notify_minimized(struct view *view);
 void view_group_notify_destroy(struct view *view);
 
 struct view *view_group_bar_view(struct wlr_scene_node *node);
+struct view *view_group_drop_target(struct view *dragged, double x, double y);
 struct view *view_group_pick_partner(struct view *view);
 void view_group_activate_from_node(struct wlr_scene_node *node);
 

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="singularity_pip_unstable_v1">
+  <copyright>
+    Copyright (c) 2026 Singularity Desktop
+  </copyright>
+
+  <interface name="zsingularity_pip_manager_v1" version="1">
+    <description summary="compositor picture-in-picture manager">
+      This privileged interface creates and controls a compositor-owned live
+      picture-in-picture view. Only one picture-in-picture view is active at a
+      time.
+    </description>
+
+    <enum name="failure_reason">
+      <entry name="invalid_toplevel" value="0"/>
+      <entry name="invalid_region" value="1"/>
+      <entry name="no_window" value="2"/>
+      <entry name="render_failed" value="3"/>
+    </enum>
+
+    <request name="show_toplevel">
+      <description summary="show a complete toplevel">
+        Replaces the active picture-in-picture view with the complete content
+        of the supplied toplevel.
+      </description>
+      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+    </request>
+
+    <request name="show_region">
+      <description summary="show a selected window region">
+        Selects the front-most mapped toplevel intersecting the global layout
+        rectangle and shows the intersecting part of that toplevel.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </request>
+
+    <request name="close">
+      <description summary="close the active picture-in-picture view"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager binding">
+        Destroying this binding does not close the active picture-in-picture
+        view.
+      </description>
+    </request>
+
+    <event name="shown">
+      <description summary="picture-in-picture view is ready"/>
+    </event>
+
+    <event name="failed">
+      <description summary="picture-in-picture request failed"/>
+      <arg name="reason" type="uint" enum="failure_reason"/>
+    </event>
+  </interface>
+</protocol>

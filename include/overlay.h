@@ -30,6 +30,9 @@ struct overlay {
 
 		bool tiling_drop;
 		struct wlr_box tiling_drop_box;
+
+		bool group_drop;
+		struct wlr_box group_drop_box;
 	} active;
 
 	/* For delayed snap-to-edge overlay */

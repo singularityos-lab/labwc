@@ -18,6 +18,7 @@ server_protocols = [
 	'wlr-output-power-management-unstable-v1.xml',
 	'wlr-foreign-toplevel-management-unstable-v1.xml',
 	'singularity-preview-unstable-v1.xml',
+	'singularity-pip-unstable-v1.xml',
 	'singularity-tiling-unstable-v1.xml',
 	'singularity-gesture-unstable-v1.xml',
 	'singularity-blur-unstable-v1.xml',

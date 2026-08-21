@@ -6,6 +6,7 @@
 #include <wlr/types/wlr_scene.h>
 #include "common/lab-scene-rect.h"
 #include "config/rcxml.h"
+#include "group.h"
 #include "labwc.h"
 #include "output.h"
 #include "protocols/singularity-tiling.h"
@@ -188,6 +189,36 @@ show_tiling_drop_overlay(struct seat *seat, struct wlr_box *box)
 	show_overlay(seat, &rc.theme->snapping_overlay_region, box);
 }
 
+static void
+show_group_drop_overlay(struct seat *seat, struct wlr_box *box)
+{
+	if (seat->overlay.active.group_drop
+			&& wlr_box_equal(&seat->overlay.active.group_drop_box, box)) {
+		return;
+	}
+	overlay_finish(seat);
+	seat->overlay.active.group_drop = true;
+	seat->overlay.active.group_drop_box = *box;
+	show_overlay(seat, &rc.theme->snapping_overlay_region, box);
+}
+
+static bool
+show_group_overlay_if_hovered(struct seat *seat)
+{
+	if (!server.grabbed_view
+			|| server.input_mode != LAB_INPUT_STATE_MOVE) {
+		return false;
+	}
+	struct view *target = view_group_drop_target(server.grabbed_view,
+		seat->cursor->x, seat->cursor->y);
+	if (!target) {
+		return false;
+	}
+	struct wlr_box box = target->current;
+	show_group_drop_overlay(seat, &box);
+	return true;
+}
+
 static struct wlr_box
 get_edge_snap_box(enum lab_edge edge, struct output *output)
 {
@@ -264,6 +295,10 @@ show_edge_overlay(struct seat *seat, enum lab_edge edge1, enum lab_edge edge2,
 void
 overlay_update(struct seat *seat)
 {
+	if (show_group_overlay_if_hovered(seat)) {
+		return;
+	}
+
 	if (singularity_tiling_scrolling_mode_enabled()) {
 		if (server.grabbed_view
 				&& server.grabbed_view->singularity_scrolling_tiled
@@ -331,4 +366,6 @@ overlay_finish(struct seat *seat)
 	seat->overlay.active.float_drop = false;
 	seat->overlay.active.tiling_drop = false;
 	seat->overlay.active.tiling_drop_box = (struct wlr_box){0};
+	seat->overlay.active.group_drop = false;
+	seat->overlay.active.group_drop_box = (struct wlr_box){0};
 }
