@@ -2,6 +2,7 @@
 #include "protocols/singularity-pip.h"
 
 #include <assert.h>
+#include <cairo.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -20,17 +21,28 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/box.h>
 #include <wlr/util/transform.h>
+#include "buffer.h"
+#include "common/graphic-helpers.h"
 #include "common/macros.h"
 #include "common/scene-helpers.h"
+#include "config/rcxml.h"
 #include "labwc.h"
 #include "output.h"
 #include "singularity-pip-unstable-v1-protocol.h"
+#include "ssd.h"
+#include "theme.h"
 #include "view.h"
 
-#define PIP_BORDER 2
-#define PIP_SHADOW_OFFSET 7
-#define PIP_CLOSE_SIZE 30
-#define PIP_RESIZE_SIZE 28
+#define PIP_BORDER 1
+#define PIP_CORNER_RADIUS 10
+#define PIP_SHADOW_BLUR 24
+#define PIP_SHADOW_OFFSET_Y 8
+#define PIP_SHADOW_LEFT PIP_SHADOW_BLUR
+#define PIP_SHADOW_TOP (PIP_SHADOW_BLUR - PIP_SHADOW_OFFSET_Y)
+#define PIP_SHADOW_RIGHT PIP_SHADOW_BLUR
+#define PIP_SHADOW_BOTTOM (PIP_SHADOW_BLUR + PIP_SHADOW_OFFSET_Y)
+#define PIP_CLOSE_SIZE 28
+#define PIP_RESIZE_SIZE 16
 #define PIP_MARGIN 18
 #define PIP_MIN_WIDTH 160
 #define PIP_MIN_HEIGHT 90
@@ -51,11 +63,18 @@ struct pip_state {
 	struct wlr_swapchain *swapchain;
 
 	struct wlr_scene_tree *root;
-	struct wlr_scene_rect *shadow;
-	struct wlr_scene_rect *border;
+	struct wlr_scene_buffer *frame;
 	struct wlr_scene_buffer *content;
 	struct wlr_scene_tree *close_control;
+	struct wlr_scene_buffer *close_visual;
 	struct wlr_scene_tree *resize_control;
+	struct wlr_scene_buffer *resize_visual;
+	struct lab_data_buffer *frame_buffer;
+	struct lab_data_buffer *close_buffers[2];
+	struct lab_data_buffer *resize_buffers[2];
+	float visual_scale;
+	bool close_hovered;
+	bool resize_hovered;
 
 	struct wlr_box crop;
 	struct wlr_box requested_crop;
@@ -77,6 +96,8 @@ struct pip_state {
 };
 
 static struct pip_state pip;
+
+static void pip_update_scene_geometry(void);
 
 static bool
 node_is_descendant(struct wlr_scene_node *node, struct wlr_scene_node *ancestor)
@@ -102,13 +123,194 @@ pip_workarea(struct output *output)
 static int
 pip_outer_width(void)
 {
-	return pip.width + PIP_BORDER * 2 + PIP_SHADOW_OFFSET;
+	return pip.width + PIP_BORDER * 2;
 }
 
 static int
 pip_outer_height(void)
 {
-	return pip.height + PIP_BORDER * 2 + PIP_SHADOW_OFFSET;
+	return pip.height + PIP_BORDER * 2;
+}
+
+static float
+pip_output_scale(void)
+{
+	if (!output_is_usable(pip.output) || pip.output->wlr_output->scale <= 0.0f) {
+		return 1.0f;
+	}
+	return pip.output->wlr_output->scale;
+}
+
+static void
+pip_drop_buffer(struct lab_data_buffer **buffer)
+{
+	if (*buffer) {
+		wlr_buffer_drop(&(*buffer)->base);
+		*buffer = NULL;
+	}
+}
+
+static void
+pip_rounded_rectangle(cairo_t *cairo, double x, double y,
+		double width, double height, double radius)
+{
+	double right = x + width;
+	double bottom = y + height;
+	double corner = MIN(radius, MIN(width, height) / 2.0);
+
+	cairo_new_sub_path(cairo);
+	cairo_arc(cairo, right - corner, y + corner,
+		corner, -G_PI / 2.0, 0);
+	cairo_arc(cairo, right - corner, bottom - corner,
+		corner, 0, G_PI / 2.0);
+	cairo_arc(cairo, x + corner, bottom - corner,
+		corner, G_PI / 2.0, G_PI);
+	cairo_arc(cairo, x + corner, y + corner,
+		corner, G_PI, G_PI * 3.0 / 2.0);
+	cairo_close_path(cairo);
+}
+
+static void
+pip_draw_shadow(cairo_t *cairo, double x, double y,
+		double width, double height)
+{
+	double sigma = PIP_SHADOW_BLUR / 3.0;
+	for (int distance = PIP_SHADOW_BLUR; distance >= 0; --distance) {
+		double normalized = distance / (sqrt(2.0) * sigma);
+		double alpha = 0.45 * 0.5 * erfc(normalized);
+		pip_rounded_rectangle(cairo,
+			x - distance, y + PIP_SHADOW_OFFSET_Y - distance,
+			width + distance * 2, height + distance * 2,
+			PIP_CORNER_RADIUS + distance);
+		cairo_set_source_rgba(cairo, 0, 0, 0, alpha);
+		cairo_set_line_width(cairo, 1.1);
+		cairo_stroke(cairo);
+	}
+}
+
+static struct lab_data_buffer *
+pip_create_frame_buffer(void)
+{
+	int frame_width = pip_outer_width();
+	int frame_height = pip_outer_height();
+	int width = frame_width + PIP_SHADOW_LEFT + PIP_SHADOW_RIGHT;
+	int height = frame_height + PIP_SHADOW_TOP + PIP_SHADOW_BOTTOM;
+	struct lab_data_buffer *buffer = buffer_create_cairo(
+		width, height, pip_output_scale());
+	cairo_t *cairo = cairo_create(buffer->surface);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
+	cairo_paint(cairo);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+	cairo_set_antialias(cairo, CAIRO_ANTIALIAS_BEST);
+
+	pip_draw_shadow(cairo, PIP_SHADOW_LEFT, PIP_SHADOW_TOP,
+		frame_width, frame_height);
+	float *text_color = rc.theme->window[SSD_ACTIVE].label_text_color;
+	float border_color[4] = {
+		text_color[0] * 0.14f,
+		text_color[1] * 0.14f,
+		text_color[2] * 0.14f,
+		text_color[3] * 0.14f,
+	};
+	set_cairo_color(cairo, border_color);
+	pip_rounded_rectangle(cairo, PIP_SHADOW_LEFT, PIP_SHADOW_TOP,
+		frame_width, frame_height, PIP_CORNER_RADIUS);
+	cairo_fill(cairo);
+	cairo_surface_flush(buffer->surface);
+	cairo_destroy(cairo);
+	return buffer;
+}
+
+static struct lab_data_buffer *
+pip_create_close_buffer(bool hovered)
+{
+	struct lab_data_buffer *buffer = buffer_create_cairo(
+		PIP_CLOSE_SIZE, PIP_CLOSE_SIZE, pip_output_scale());
+	cairo_t *cairo = cairo_create(buffer->surface);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
+	cairo_paint(cairo);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+	cairo_set_antialias(cairo, CAIRO_ANTIALIAS_BEST);
+
+	cairo_arc(cairo, PIP_CLOSE_SIZE / 2.0, PIP_CLOSE_SIZE / 2.0,
+		PIP_CLOSE_SIZE / 2.0 - 0.5, 0, G_PI * 2.0);
+	cairo_set_source_rgba(cairo, 0, 0, 0, hovered ? 0.60 : 0.45);
+	cairo_fill_preserve(cairo);
+	cairo_set_source_rgba(cairo, 1, 1, 1, hovered ? 0.28 : 0.18);
+	cairo_set_line_width(cairo, 1.0);
+	cairo_stroke(cairo);
+
+	cairo_set_source_rgba(cairo, 1, 1, 1, 1);
+	cairo_set_line_width(cairo, 1.5);
+	cairo_set_line_cap(cairo, CAIRO_LINE_CAP_SQUARE);
+	cairo_move_to(cairo, 11, 11);
+	cairo_line_to(cairo, 17, 17);
+	cairo_move_to(cairo, 17, 11);
+	cairo_line_to(cairo, 11, 17);
+	cairo_stroke(cairo);
+	cairo_surface_flush(buffer->surface);
+	cairo_destroy(cairo);
+	return buffer;
+}
+
+static struct lab_data_buffer *
+pip_create_resize_buffer(bool hovered)
+{
+	struct lab_data_buffer *buffer = buffer_create_cairo(
+		PIP_RESIZE_SIZE, PIP_RESIZE_SIZE, pip_output_scale());
+	cairo_t *cairo = cairo_create(buffer->surface);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_CLEAR);
+	cairo_paint(cairo);
+	cairo_set_operator(cairo, CAIRO_OPERATOR_OVER);
+	cairo_set_antialias(cairo, CAIRO_ANTIALIAS_BEST);
+
+	float *text_color = rc.theme->window[SSD_ACTIVE].label_text_color;
+	double alpha = hovered ? 0.51 : 0.21;
+	set_cairo_color(cairo, (float[4]) {
+		text_color[0] * alpha,
+		text_color[1] * alpha,
+		text_color[2] * alpha,
+		text_color[3] * alpha,
+	});
+	cairo_arc(cairo, PIP_RESIZE_SIZE - 1.0, PIP_RESIZE_SIZE - 1.0,
+		1.0, 0, G_PI * 2.0);
+	cairo_fill(cairo);
+	cairo_surface_flush(buffer->surface);
+	cairo_destroy(cairo);
+	return buffer;
+}
+
+static void
+pip_update_frame_buffer(void)
+{
+	struct lab_data_buffer *buffer = pip_create_frame_buffer();
+	wlr_scene_buffer_set_buffer(pip.frame, &buffer->base);
+	wlr_scene_buffer_set_dest_size(pip.frame,
+		buffer->logical_width, buffer->logical_height);
+	pip_drop_buffer(&pip.frame_buffer);
+	pip.frame_buffer = buffer;
+}
+
+static void
+pip_update_control_buffers(void)
+{
+	for (int hovered = 0; hovered < 2; ++hovered) {
+		struct lab_data_buffer *close = pip_create_close_buffer(hovered);
+		struct lab_data_buffer *resize = pip_create_resize_buffer(hovered);
+		pip_drop_buffer(&pip.close_buffers[hovered]);
+		pip_drop_buffer(&pip.resize_buffers[hovered]);
+		pip.close_buffers[hovered] = close;
+		pip.resize_buffers[hovered] = resize;
+	}
+	wlr_scene_buffer_set_buffer(pip.close_visual,
+		&pip.close_buffers[pip.close_hovered]->base);
+	wlr_scene_buffer_set_dest_size(pip.close_visual,
+		PIP_CLOSE_SIZE, PIP_CLOSE_SIZE);
+	wlr_scene_buffer_set_buffer(pip.resize_visual,
+		&pip.resize_buffers[pip.resize_hovered]->base);
+	wlr_scene_buffer_set_dest_size(pip.resize_visual,
+		PIP_RESIZE_SIZE, PIP_RESIZE_SIZE);
+	pip.visual_scale = pip_output_scale();
 }
 
 static void
@@ -130,6 +332,9 @@ pip_set_output(struct output *output)
 		wlr_swapchain_destroy(pip.swapchain);
 		pip.swapchain = NULL;
 	}
+	if (pip.root) {
+		pip_update_scene_geometry();
+	}
 }
 
 static void
@@ -147,7 +352,8 @@ pip_clamp_position(void)
 	pip.x = MAX(workarea.x, MIN(pip.x, max_x));
 	pip.y = MAX(workarea.y, MIN(pip.y, max_y));
 	if (pip.root) {
-		wlr_scene_node_set_position(&pip.root->node, pip.x, pip.y);
+		wlr_scene_node_set_position(&pip.root->node,
+			pip.x - PIP_SHADOW_LEFT, pip.y - PIP_SHADOW_TOP);
 	}
 }
 
@@ -158,10 +364,8 @@ pip_fit_output_bounds(void)
 	if (wlr_box_empty(&workarea) || pip.width <= 0 || pip.height <= 0) {
 		return false;
 	}
-	int max_width = MAX(1, workarea.width
-		- PIP_BORDER * 2 - PIP_SHADOW_OFFSET);
-	int max_height = MAX(1, workarea.height
-		- PIP_BORDER * 2 - PIP_SHADOW_OFFSET);
+	int max_width = MAX(1, workarea.width - PIP_BORDER * 2);
+	int max_height = MAX(1, workarea.height - PIP_BORDER * 2);
 	if (pip.width <= max_width && pip.height <= max_height) {
 		return false;
 	}
@@ -179,77 +383,60 @@ pip_update_scene_geometry(void)
 		return;
 	}
 
-	int frame_width = pip.width + PIP_BORDER * 2;
-	int frame_height = pip.height + PIP_BORDER * 2;
-	wlr_scene_rect_set_size(pip.shadow, frame_width, frame_height);
-	wlr_scene_rect_set_size(pip.border, frame_width, frame_height);
+	float scale = pip_output_scale();
+	pip_update_frame_buffer();
+	if (fabsf(scale - pip.visual_scale) > 0.001f) {
+		pip_update_control_buffers();
+	}
 	wlr_scene_buffer_set_dest_size(pip.content, pip.width, pip.height);
+	wlr_scene_node_set_position(&pip.content->node,
+		PIP_SHADOW_LEFT + PIP_BORDER, PIP_SHADOW_TOP + PIP_BORDER);
 	wlr_scene_node_set_position(&pip.close_control->node,
-		PIP_BORDER + pip.width - PIP_CLOSE_SIZE - 6, PIP_BORDER + 6);
+		PIP_SHADOW_LEFT + PIP_BORDER + pip.width - PIP_CLOSE_SIZE - 6,
+		PIP_SHADOW_TOP + PIP_BORDER + 6);
 	wlr_scene_node_set_position(&pip.resize_control->node,
-		PIP_BORDER + pip.width - PIP_RESIZE_SIZE,
-		PIP_BORDER + pip.height - PIP_RESIZE_SIZE);
+		PIP_SHADOW_LEFT + PIP_BORDER + pip.width - PIP_RESIZE_SIZE - 2,
+		PIP_SHADOW_TOP + PIP_BORDER + pip.height - PIP_RESIZE_SIZE - 2);
 	pip_clamp_position();
 }
 
-static void
-pip_create_close_mark(struct wlr_scene_tree *parent)
+static bool
+pip_never_accepts_input(struct wlr_scene_buffer *buffer, double *sx, double *sy)
 {
-	const float color[4] = {0.92f, 0.92f, 0.92f, 0.92f};
-	for (int i = 0; i < 5; ++i) {
-		struct wlr_scene_rect *down =
-			lab_wlr_scene_rect_create(parent, 3, 3, color);
-		wlr_scene_node_set_position(&down->node, 9 + i * 3, 9 + i * 3);
-		if (i == 2) {
-			continue;
-		}
-		struct wlr_scene_rect *up =
-			lab_wlr_scene_rect_create(parent, 3, 3, color);
-		wlr_scene_node_set_position(&up->node, 21 - i * 3, 9 + i * 3);
-	}
+	(void)buffer;
+	(void)sx;
+	(void)sy;
+	return false;
 }
 
-static void
-pip_create_resize_mark(struct wlr_scene_tree *parent)
+static bool
+pip_content_accepts_input(struct wlr_scene_buffer *buffer, double *sx, double *sy)
 {
-	const float color[4] = {0.8f, 0.8f, 0.8f, 0.8f};
-	struct wlr_scene_rect *line;
-
-	line = lab_wlr_scene_rect_create(parent, 12, 2, color);
-	wlr_scene_node_set_position(&line->node, 11, 21);
-	line = lab_wlr_scene_rect_create(parent, 2, 12, color);
-	wlr_scene_node_set_position(&line->node, 21, 11);
-	line = lab_wlr_scene_rect_create(parent, 7, 2, color);
-	wlr_scene_node_set_position(&line->node, 16, 16);
-	line = lab_wlr_scene_rect_create(parent, 2, 7, color);
-	wlr_scene_node_set_position(&line->node, 16, 16);
+	(void)buffer;
+	double radius = PIP_CORNER_RADIUS - PIP_BORDER;
+	double x = *sx < radius ? radius - *sx
+		: *sx > pip.width - radius ? *sx - (pip.width - radius) : 0;
+	double y = *sy < radius ? radius - *sy
+		: *sy > pip.height - radius ? *sy - (pip.height - radius) : 0;
+	return x == 0 || y == 0 || x * x + y * y <= radius * radius;
 }
 
 static void
 pip_create_scene(void)
 {
-	const float shadow_color[4] = {0.0f, 0.0f, 0.0f, 0.32f};
-	const float border_color[4] = {0.07f, 0.07f, 0.07f, 1.0f};
-	const float control_color[4] = {0.0f, 0.0f, 0.0f, 0.68f};
-
 	pip.root = lab_wlr_scene_tree_create(server.pip_tree);
-	pip.shadow = lab_wlr_scene_rect_create(pip.root, 1, 1, shadow_color);
-	wlr_scene_node_set_position(&pip.shadow->node,
-		PIP_SHADOW_OFFSET, PIP_SHADOW_OFFSET);
-	pip.border = lab_wlr_scene_rect_create(pip.root, 1, 1, border_color);
+	pip.frame = lab_wlr_scene_buffer_create(pip.root, NULL);
+	pip.frame->point_accepts_input = pip_never_accepts_input;
 	pip.content = lab_wlr_scene_buffer_create(pip.root, NULL);
-	wlr_scene_node_set_position(&pip.content->node, PIP_BORDER, PIP_BORDER);
+	pip.content->point_accepts_input = pip_content_accepts_input;
 	wlr_scene_buffer_set_filter_mode(pip.content, WLR_SCALE_FILTER_BILINEAR);
 
 	pip.close_control = lab_wlr_scene_tree_create(pip.root);
-	lab_wlr_scene_rect_create(pip.close_control, PIP_CLOSE_SIZE,
-		PIP_CLOSE_SIZE, control_color);
-	pip_create_close_mark(pip.close_control);
+	pip.close_visual = lab_wlr_scene_buffer_create(pip.close_control, NULL);
 
 	pip.resize_control = lab_wlr_scene_tree_create(pip.root);
-	lab_wlr_scene_rect_create(pip.resize_control, PIP_RESIZE_SIZE,
-		PIP_RESIZE_SIZE, control_color);
-	pip_create_resize_mark(pip.resize_control);
+	pip.resize_visual = lab_wlr_scene_buffer_create(pip.resize_control, NULL);
+	pip_update_control_buffers();
 	pip_update_scene_geometry();
 }
 
@@ -392,6 +579,38 @@ render_surface(struct wlr_surface *surface, int sx, int sy, void *data)
 		});
 }
 
+static void
+pip_clear_rounded_corners(struct wlr_render_pass *pass,
+		int width, int height, float scale)
+{
+	int radius = MAX(1, (int)lround(
+		(PIP_CORNER_RADIUS - PIP_BORDER) * scale));
+	for (int row = 0; row < radius; ++row) {
+		double y = row + 0.5;
+		double distance = radius - y;
+		int inset = (int)ceil(radius
+			- sqrt(MAX(0.0, radius * radius - distance * distance)));
+		if (inset <= 0) {
+			continue;
+		}
+		struct wlr_box corners[4] = {
+			{.x = 0, .y = row, .width = inset, .height = 1},
+			{.x = width - inset, .y = row, .width = inset, .height = 1},
+			{.x = 0, .y = height - row - 1, .width = inset, .height = 1},
+			{.x = width - inset, .y = height - row - 1,
+				.width = inset, .height = 1},
+		};
+		for (size_t i = 0; i < ARRAY_SIZE(corners); ++i) {
+			wlr_render_pass_add_rect(pass,
+				&(struct wlr_render_rect_options) {
+					.box = corners[i],
+					.color = {0},
+					.blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+				});
+		}
+	}
+}
+
 static bool
 pip_render(void)
 {
@@ -456,6 +675,7 @@ pip_render(void)
 		.offset_y = offset_y,
 	};
 	wlr_surface_for_each_surface(pip.view->surface, render_surface, &context);
+	pip_clear_rounded_corners(pass, buffer_width, buffer_height, output_scale);
 	pixman_region32_fini(&clip);
 	if (!wlr_render_pass_submit(pass)) {
 		wlr_buffer_unlock(buffer);
@@ -481,12 +701,21 @@ singularity_pip_close(void)
 	if (pip.root) {
 		wlr_scene_node_destroy(&pip.root->node);
 		pip.root = NULL;
-		pip.shadow = NULL;
-		pip.border = NULL;
+		pip.frame = NULL;
 		pip.content = NULL;
 		pip.close_control = NULL;
+		pip.close_visual = NULL;
 		pip.resize_control = NULL;
+		pip.resize_visual = NULL;
 	}
+	pip_drop_buffer(&pip.frame_buffer);
+	for (size_t i = 0; i < ARRAY_SIZE(pip.close_buffers); ++i) {
+		pip_drop_buffer(&pip.close_buffers[i]);
+		pip_drop_buffer(&pip.resize_buffers[i]);
+	}
+	pip.visual_scale = 0;
+	pip.close_hovered = false;
+	pip.resize_hovered = false;
 	if (pip.swapchain) {
 		wlr_swapchain_destroy(pip.swapchain);
 		pip.swapchain = NULL;
@@ -760,24 +989,51 @@ singularity_pip_send_frame_done(struct output *output,
 	pip_schedule_frame();
 }
 
+static void
+pip_set_control_hover(enum singularity_pip_cursor_area area)
+{
+	bool close_hovered = area == SINGULARITY_PIP_CURSOR_CLOSE;
+	bool resize_hovered = area == SINGULARITY_PIP_CURSOR_RESIZE;
+	if (close_hovered != pip.close_hovered) {
+		pip.close_hovered = close_hovered;
+		wlr_scene_buffer_set_buffer(pip.close_visual,
+			&pip.close_buffers[close_hovered]->base);
+		pip_schedule_frame();
+	}
+	if (resize_hovered != pip.resize_hovered) {
+		pip.resize_hovered = resize_hovered;
+		wlr_scene_buffer_set_buffer(pip.resize_visual,
+			&pip.resize_buffers[resize_hovered]->base);
+		pip_schedule_frame();
+	}
+}
+
 enum singularity_pip_cursor_area
 singularity_pip_cursor_area(struct wlr_scene_node *node)
 {
 	if (pip.interaction == PIP_INTERACTION_RESIZE) {
+		pip_set_control_hover(SINGULARITY_PIP_CURSOR_RESIZE);
 		return SINGULARITY_PIP_CURSOR_RESIZE;
 	}
 	if (pip.interaction == PIP_INTERACTION_MOVE) {
+		pip_set_control_hover(SINGULARITY_PIP_CURSOR_CONTENT);
 		return SINGULARITY_PIP_CURSOR_CONTENT;
 	}
 	if (!pip.root || !node || !node_is_descendant(node, &pip.root->node)) {
+		if (pip.root) {
+			pip_set_control_hover(SINGULARITY_PIP_CURSOR_NONE);
+		}
 		return SINGULARITY_PIP_CURSOR_NONE;
 	}
 	if (node_is_descendant(node, &pip.close_control->node)) {
+		pip_set_control_hover(SINGULARITY_PIP_CURSOR_CLOSE);
 		return SINGULARITY_PIP_CURSOR_CLOSE;
 	}
 	if (node_is_descendant(node, &pip.resize_control->node)) {
+		pip_set_control_hover(SINGULARITY_PIP_CURSOR_RESIZE);
 		return SINGULARITY_PIP_CURSOR_RESIZE;
 	}
+	pip_set_control_hover(SINGULARITY_PIP_CURSOR_CONTENT);
 	return SINGULARITY_PIP_CURSOR_CONTENT;
 }
 
@@ -863,9 +1119,9 @@ singularity_pip_cursor_motion(double x, double y)
 
 	struct wlr_box workarea = pip_workarea(pip.output);
 	int available_width = workarea.x + workarea.width
-		- pip.grab_pip_x - PIP_BORDER * 2 - PIP_SHADOW_OFFSET;
+		- pip.grab_pip_x - PIP_BORDER * 2;
 	int available_height = workarea.y + workarea.height
-		- pip.grab_pip_y - PIP_BORDER * 2 - PIP_SHADOW_OFFSET;
+		- pip.grab_pip_y - PIP_BORDER * 2;
 	double scale_x = (pip.grab_width + dx) / pip.grab_width;
 	double scale_y = (pip.grab_height + dy) / pip.grab_height;
 	double scale = fabs(scale_x - 1.0) > fabs(scale_y - 1.0)
