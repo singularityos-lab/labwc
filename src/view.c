@@ -20,7 +20,6 @@
 #include "cycle.h"
 #include "foreign-toplevel/foreign.h"
 #include "input/keyboard.h"
-#include "group.h"
 #include "labwc.h"
 #include "menu/menu.h"
 #include "output.h"
@@ -565,7 +564,6 @@ view_moved(struct view *view)
 	}
 	view_update_outputs(view);
 	ssd_update_geometry(view->ssd);
-	view_group_notify_geometry(view);
 	cursor_update_focus();
 	if (rc.resize_indicator && server.grabbed_view == view) {
 		resize_indicator_update(view);
@@ -811,8 +809,6 @@ view_minimize(struct view *view, bool minimized)
 	 * Update focus only at the end to avoid repeated focus changes.
 	 * desktop_focus_view() will raise all sibling views together.
 	 */
-	view_group_notify_minimized(view);
-
 	if (need_refocus) {
 		if (minimized) {
 			desktop_focus_topmost_view();
@@ -2336,7 +2332,6 @@ view_set_title(struct view *view, const char *title)
 	xstrdup_replace(view->title, title);
 
 	ssd_update_title(view->ssd);
-	view_group_notify_title(view);
 	wl_signal_emit_mutable(&view->events.new_title, NULL);
 }
 
@@ -2411,8 +2406,7 @@ mappable_disconnect(struct mappable *mappable)
 void
 view_update_visibility(struct view *view)
 {
-	bool visible = view->mapped && !view->minimized
-		&& !view_group_is_hidden(view);
+	bool visible = view->mapped && !view->minimized;
 	bool enabled = view->scene_tree->node.enabled;
 	bool animation_running = view_animation_is_running(view);
 	if (animation_running && visible && !enabled) {
@@ -2539,7 +2533,6 @@ view_destroy(struct view *view)
 	view_close_gesture_set_progress(view, 0.0f);
 
 	wl_signal_emit_mutable(&view->events.destroy, NULL);
-	view_group_notify_destroy(view);
 	snap_constraints_invalidate(view);
 
 	if (view->mappable.connected) {

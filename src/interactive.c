@@ -4,8 +4,6 @@
 #include "config/rcxml.h"
 #include "edges.h"
 #include "input/keyboard.h"
-#include "group.h"
-#include "overlay.h"
 #include "labwc.h"
 #include "output.h"
 #include "protocols/singularity-tiling.h"
@@ -341,15 +339,6 @@ interactive_finish(struct view *view)
 	}
 
 	bool scrolling_tiled = view->singularity_scrolling_tiled;
-	struct view *group_target = server.input_mode == LAB_INPUT_STATE_MOVE
-		? view_group_drop_target(view, server.seat.cursor->x,
-			server.seat.cursor->y) : NULL;
-	if (group_target) {
-		overlay_finish(&server.seat);
-		interactive_cancel(view);
-		view_group_join(view, group_target);
-		return;
-	}
 	if (server.input_mode == LAB_INPUT_STATE_MOVE
 			&& !singularity_tiling_scrolling_mode_enabled()) {
 		if (!snap_to_region(view)) {

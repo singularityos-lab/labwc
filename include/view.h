@@ -200,8 +200,6 @@ struct view {
 	enum view_layer layer;
 	bool visible_on_all_workspaces;
 	enum lab_edge tiled;
-	struct view_group *group;
-	struct wl_list group_link;
 	enum lab_edge edges_visible;
 	bool inhibits_keybinds; /* also inhibits mousebinds */
 	xkb_layout_index_t keyboard_layout;

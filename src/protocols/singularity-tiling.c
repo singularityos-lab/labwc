@@ -6,7 +6,6 @@
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output_layout.h>
 #include "foreign-toplevel/foreign.h"
-#include "group.h"
 #include "labwc.h"
 #include "output.h"
 #include "overlay.h"
@@ -29,8 +28,7 @@ static struct singularity_tiling_manager *tiling_manager;
 static bool
 view_is_tileable(struct view *view)
 {
-	return view && !view_group_is_hidden(view)
-		&& (!view->impl->get_parent || !view->impl->get_parent(view))
+	return view && (!view->impl->get_parent || !view->impl->get_parent(view))
 		&& (!view->impl->is_modal_dialog
 			|| !view->impl->is_modal_dialog(view))
 		&& (!view->impl->contains_window_type
@@ -55,15 +53,12 @@ handle_set_geometry(struct wl_client *client, struct wl_resource *resource,
 	if (!view || width < 1 || height < 1) {
 		return;
 	}
-	struct wlr_box box = {
+	view_move_resize(view, (struct wlr_box){
 		.x = x,
 		.y = y,
 		.width = width,
 		.height = height,
-	};
-	if (!view_group_apply_box(view, box)) {
-		view_move_resize(view, box);
-	}
+	});
 	view_close_gesture_set_progress(view,
 		view->close_gesture_progress);
 }
@@ -330,47 +325,6 @@ handle_move_to_workspace(struct wl_client *client, struct wl_resource *resource,
 	}
 }
 
-static void
-handle_group_join(struct wl_client *client, struct wl_resource *resource,
-	struct wl_resource *toplevel_resource, struct wl_resource *target_resource)
-{
-	struct view *view = view_from_toplevel_resource(toplevel_resource);
-	struct view *target = view_from_toplevel_resource(target_resource);
-	if (view && target) {
-		view_group_join(view, target);
-	}
-}
-
-static void
-handle_group_leave(struct wl_client *client, struct wl_resource *resource,
-	struct wl_resource *toplevel_resource)
-{
-	struct view *view = view_from_toplevel_resource(toplevel_resource);
-	if (view) {
-		view_group_leave(view);
-	}
-}
-
-static void
-handle_group_activate(struct wl_client *client, struct wl_resource *resource,
-	struct wl_resource *toplevel_resource)
-{
-	struct view *view = view_from_toplevel_resource(toplevel_resource);
-	if (view) {
-		view_group_activate(view);
-	}
-}
-
-static void
-handle_group_set_spread(struct wl_client *client, struct wl_resource *resource,
-	struct wl_resource *toplevel_resource, uint32_t spread)
-{
-	struct view *view = view_from_toplevel_resource(toplevel_resource);
-	if (view && view->group && view->group->spread != (spread != 0)) {
-		view_group_toggle_spread(view);
-	}
-}
-
 static const struct zsingularity_tiling_manager_v1_interface manager_impl = {
 	.get_geometry = handle_get_geometry,
 	.set_geometry = handle_set_geometry,
@@ -384,10 +338,6 @@ static const struct zsingularity_tiling_manager_v1_interface manager_impl = {
 	.get_tileable = handle_get_tileable,
 	.set_close_gesture_progress = handle_set_close_gesture_progress,
 	.get_layout_workarea = handle_get_layout_workarea,
-	.group_join = handle_group_join,
-	.group_leave = handle_group_leave,
-	.group_activate = handle_group_activate,
-	.group_set_spread = handle_group_set_spread,
 	.get_cursor_position = handle_get_cursor_position,
 };
 
@@ -493,34 +443,6 @@ toplevel_resource_for_client(struct view *view, struct wl_client *client)
 		}
 	}
 	return NULL;
-}
-
-void
-singularity_tiling_send_group_state(struct view *view)
-{
-	if (!tiling_manager || !view || !view->foreign_toplevel) {
-		return;
-	}
-	struct view_group *group = view->group;
-	uint32_t id = group ? view_group_id(group) : 0;
-	uint32_t active = group && group->active == view;
-	uint32_t index = group ? view_group_index(view) : 0;
-	uint32_t members = group ? (uint32_t)wl_list_length(&group->members) : 0;
-	uint32_t spread = group && group->spread;
-
-	struct wl_resource *resource;
-	wl_resource_for_each(resource, &tiling_manager->resources) {
-		if (wl_resource_get_version(resource) < 11) {
-			continue;
-		}
-		struct wl_resource *toplevel = toplevel_resource_for_client(view,
-			wl_resource_get_client(resource));
-		if (!toplevel) {
-			continue;
-		}
-		zsingularity_tiling_manager_v1_send_group_state(resource,
-			toplevel, id, active, index, members, spread);
-	}
 }
 
 void

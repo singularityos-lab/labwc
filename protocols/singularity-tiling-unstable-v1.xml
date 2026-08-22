@@ -4,7 +4,7 @@
     Copyright © 2024 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_tiling_manager_v1" version="11">
+  <interface name="zsingularity_tiling_manager_v1" version="10">
     <description summary="tiling window management">
       This interface allows a client to manage window geometry for tiling purposes.
     </description>
@@ -228,55 +228,6 @@
       </description>
       <arg name="x" type="int"/>
       <arg name="y" type="int"/>
-    </event>
-
-    <request name="group_join" since="11">
-      <description summary="put a toplevel in another toplevel's group">
-        Adds toplevel to the group of target, creating the group if target
-        does not have one yet. The joining toplevel becomes the active member.
-        A group is one rectangle shared by its members, with the compositor
-        drawing the tab bar and hiding every member but the active one.
-      </description>
-      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
-      <arg name="target" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
-    </request>
-
-    <request name="group_leave" since="11">
-      <description summary="remove a toplevel from its group">
-        The toplevel keeps its current geometry. A group left with a single
-        member is dissolved and that member reclaims the whole rectangle.
-      </description>
-      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
-    </request>
-
-    <request name="group_activate" since="11">
-      <description summary="make a toplevel the visible member of its group">
-        The toplevel is raised and focused.
-      </description>
-      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
-    </request>
-
-    <request name="group_set_spread" since="11">
-      <description summary="split the group rectangle between all members">
-        Spread shows every member at once inside the group rectangle instead
-        of showing one at a time.
-      </description>
-      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
-      <arg name="spread" type="uint"/>
-    </request>
-
-    <event name="group_state" since="11">
-      <description summary="group membership of a toplevel">
-        Sent whenever the group of a toplevel changes. group is 0 when the
-        toplevel is not grouped, in which case the remaining arguments are 0.
-        index is the zero-based position of the toplevel in the tab order.
-      </description>
-      <arg name="toplevel" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
-      <arg name="group" type="uint"/>
-      <arg name="active" type="uint"/>
-      <arg name="index" type="uint"/>
-      <arg name="members" type="uint"/>
-      <arg name="spread" type="uint"/>
     </event>
   </interface>
 </protocol>
