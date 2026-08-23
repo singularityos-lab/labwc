@@ -174,6 +174,8 @@ labwc_deps = [
   pixman,
   math,
   png,
+  dependency('egl'),
+  dependency('glesv2'),
 ]
 if have_rsvg
   labwc_deps += [

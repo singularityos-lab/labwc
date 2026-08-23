@@ -105,6 +105,9 @@ lab_wlr_scene_output_commit(struct wlr_scene_output *scene_output,
 	struct wlr_output *wlr_output = scene_output->output;
 	struct output *output = wlr_output->data;
 	bool wants_magnification = output_wants_magnification(output);
+	bool has_background_effects = singularity_blur_has_effects();
+	bool has_material_animation =
+		singularity_blur_output_has_animations(output);
 
 	/*
 	 * FIXME: Regardless of wants_magnification, we are currently adding
@@ -112,11 +115,26 @@ lab_wlr_scene_output_commit(struct wlr_scene_output *scene_output,
 	 * rendering on every output commit and overloads CPU.
 	 * We also need to verify the necessity of wants_magnification.
 	 */
-	if (!wlr_scene_output_needs_frame(scene_output) && !wants_magnification) {
+	if (!wlr_scene_output_needs_frame(scene_output) && !wants_magnification
+			&& !has_material_animation && !has_background_effects) {
 		return true;
 	}
 
-	if (!wlr_scene_output_build_state(scene_output, state, NULL)) {
+	if (has_background_effects) {
+		pixman_region32_t damage;
+		pixman_region32_init(&damage);
+		singularity_blur_output_damage(output, &damage);
+		scene_output_damage(scene_output, &damage);
+		pixman_region32_fini(&damage);
+	}
+	if (has_background_effects) {
+		wlr_output_lock_attach_render(wlr_output, true);
+	}
+	bool state_built = wlr_scene_output_build_state(scene_output, state, NULL);
+	if (has_background_effects) {
+		wlr_output_lock_attach_render(wlr_output, false);
+	}
+	if (!state_built) {
 		wlr_log(WLR_ERROR, "Failed to build output state for %s",
 			wlr_output->name);
 		return false;
@@ -134,7 +152,7 @@ lab_wlr_scene_output_commit(struct wlr_scene_output *scene_output,
 	}
 
 	if (state->buffer) {
-		singularity_blur_render(output, state->buffer);
+		singularity_blur_render(output, state);
 	}
 
 	bool committed = wlr_output_commit_state(wlr_output, state);

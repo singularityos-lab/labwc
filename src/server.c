@@ -84,6 +84,7 @@
 
 void singularity_preview_init(void);
 void singularity_blur_init(void);
+void singularity_blur_finish(void);
 
 #define LAB_EXT_DATA_CONTROL_VERSION 1
 #define LAB_EXT_FOREIGN_TOPLEVEL_LIST_VERSION 1
@@ -915,6 +916,7 @@ server_finish(void)
 
 	wl_display_destroy_clients(server.wl_display);
 	singularity_pip_finish();
+	singularity_blur_finish();
 
 	seat_finish();
 	output_finish();

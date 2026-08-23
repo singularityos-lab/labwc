@@ -7,4 +7,5 @@ option('nls', type: 'feature', value: 'auto', description: 'Enable native langua
 option('systemd-session', type: 'feature', value: 'auto', description: 'Install labwc-session.target systemd user unit')
 option('static_analyzer', type: 'feature', value: 'disabled', description: 'Run gcc static analyzer')
 option('test', type: 'feature', value: 'disabled', description: 'Run tests')
+option('material-test-client', type: 'feature', value: 'disabled', description: 'Build the background material test client')
 option('sections', type: 'feature', value: 'disabled', description: 'Show unused functions')

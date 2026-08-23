@@ -1,76 +1,70 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <protocol name="singularity_blur_unstable_v1">
   <copyright>
-    Copyright © 2024 Singularity Desktop
+    Copyright 2026 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_blur_manager_v1" version="1">
-    <description summary="blur manager for Singularity shell surfaces">
-      This interface allows a shell surface to request that the compositor
-      blur the content rendered behind it, creating a frosted-glass effect.
+  <interface name="zsingularity_blur_manager_v1" version="3">
+    <description summary="background material manager">
+      Lets a client request a compositor-rendered material behind one of its
+      surfaces. The compositor uses the surface alpha as the material mask.
     </description>
 
-    <request name="destroy" type="destructor">
-      <description summary="destroy the manager">
-        Destroy the blur manager. All blur objects created via this manager
-        remain valid.
-      </description>
-    </request>
+    <request name="destroy" type="destructor"/>
 
     <enum name="error">
       <entry name="invalid_surface" value="0"
-             summary="the wl_surface argument is not valid"/>
+             summary="the wl_surface argument is invalid"/>
+      <entry name="effect_exists" value="1"
+             summary="the surface already has an effect object"/>
     </enum>
 
     <request name="get_blur">
-      <description summary="get blur object for a surface">
-        Create a blur object for the given surface. Only one blur object
-        may exist per surface at a time.
-      </description>
-      <arg name="id" type="new_id" interface="zsingularity_blur_v1"
-           summary="new blur object id"/>
-      <arg name="surface" type="object" interface="wl_surface"
-           summary="the surface to blur behind"/>
+      <arg name="id" type="new_id" interface="zsingularity_blur_v1"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
     </request>
   </interface>
 
-  <interface name="zsingularity_blur_v1" version="1">
-    <description summary="blur object for a surface">
-      A blur object is associated with a wl_surface and controls how the
-      compositor blurs content behind that surface.
-
-      The blur parameters are double-buffered: they take effect when
-      commit() is called.
+  <interface name="zsingularity_blur_v1" version="3">
+    <description summary="background material for a surface">
+      Parameters are double-buffered and become active on commit.
     </description>
 
-    <request name="destroy" type="destructor">
-      <description summary="destroy the blur object">
-        Destroy the blur object. The blur effect is removed from the
-        associated surface.
-      </description>
-    </request>
+    <enum name="mode">
+      <entry name="disabled" value="0" summary="no background material"/>
+      <entry name="glass" value="1" summary="refractive glass material"/>
+      <entry name="blur" value="2" summary="classic background blur"/>
+    </enum>
+
+    <request name="destroy" type="destructor"/>
 
     <request name="set_radius">
-      <description summary="set the blur radius">
-        Set the blur radius in pixels. A radius of 0 disables blur.
-        Changes take effect on the next commit().
-      </description>
-      <arg name="radius" type="uint" summary="blur radius in pixels"/>
+      <arg name="radius" type="uint" summary="legacy blur radius"/>
     </request>
 
     <request name="set_noise">
-      <description summary="set the noise amount">
-        Set the noise amount as a percentage (0-100). Noise is overlaid
-        on the blurred region to reduce banding. Changes take effect on
-        the next commit().
-      </description>
-      <arg name="noise" type="uint" summary="noise percentage (0-100)"/>
+      <arg name="noise" type="uint" summary="legacy noise percentage"/>
     </request>
 
-    <request name="commit">
-      <description summary="apply pending blur parameter changes">
-        Apply all pending blur parameter changes (radius, noise).
+    <request name="commit"/>
+
+    <request name="set_mode" since="2">
+      <arg name="mode" type="uint" enum="mode"/>
+    </request>
+
+    <request name="set_region" since="2">
+      <description summary="limit the material to a surface-local region">
+        A null region selects the complete surface. Pixels with zero or full
+        alpha remain unchanged even when they fall inside the region.
       </description>
+      <arg name="region" type="object" interface="wl_region" allow-null="true"/>
+    </request>
+
+    <request name="set_strength" since="3">
+      <description summary="set material blur strength">
+        Values are percentages clamped to 0-100 by the compositor.
+      </description>
+      <arg name="strength" type="uint" summary="blur strength percentage"/>
     </request>
   </interface>
 </protocol>
