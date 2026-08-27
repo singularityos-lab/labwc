@@ -23,10 +23,8 @@
 
 # How to Contribute
 
-1. Report bugs as GitHub issues. We use a template prompting you to provide
-   some sensible information such as what happened, what you expected to happen
-   and steps to reproduce. If applicable try with default configuration. If
-   you are able to, try debugging (guidelines below).
+1. Report bugs and request features for the Singularity fork in the
+   [Singularity Desktop tracker](https://github.com/singularityos-lab/singularity-desktop/issues/new/choose).
 
 2. Submit patches as GitHub pull requests. If you wish to introduce significant
    changes or new features, consult the [scope document], discuss on IRC or via

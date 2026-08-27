@@ -1,5 +1,9 @@
 # labwc
 
+> [!IMPORTANT]
+> Report bugs and request features in the
+> [Singularity Desktop tracker](https://github.com/singularityos-lab/singularity-desktop/issues/new/choose).
+
 <h3 align="center">[<a
 href="https://labwc.github.io/">Website</a>] [<a
 href="https://github.com/labwc/labwc-scope#readme">Scope</a>] [<a
