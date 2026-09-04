@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "protocols/singularity-gesture.h"
+#include "protocols/singularity-tiling.h"
 #include <stdlib.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_output_layout.h>
@@ -10,6 +11,7 @@
 #include "singularity-gesture-unstable-v1-protocol.h"
 #include "view.h"
 #include "view-animation.h"
+#include "workspaces.h"
 
 #define REVEAL_EDGE_SIZE 28
 #define REVEAL_GESTURE_DISTANCE 0.35
@@ -44,6 +46,13 @@ static struct {
 	int frame;
 	bool initialized;
 } desktop_reveal;
+
+static struct {
+	struct wl_resource *resource;
+	uint32_t fingers;
+	enum direction direction;
+	bool workspace;
+} control_gesture;
 
 static void
 reveal_view_destroy(struct wl_listener *listener, void *data)
@@ -236,8 +245,79 @@ handle_toggle_desktop_reveal(struct wl_client *client,
 	desktop_reveal_toggle();
 }
 
+static void
+control_gesture_finish(bool cancelled, bool committed)
+{
+	if (!control_gesture.resource) {
+		return;
+	}
+	if (control_gesture.workspace) {
+		workspaces_swipe_end(!cancelled && committed);
+	}
+	singularity_gesture_send_end(cancelled, !cancelled && committed);
+	control_gesture.resource = NULL;
+	control_gesture.fingers = 0;
+	control_gesture.direction = LAB_DIRECTION_INVALID;
+	control_gesture.workspace = false;
+}
+
+static void
+handle_begin_control(struct wl_client *client, struct wl_resource *resource,
+	uint32_t fingers, uint32_t direction_value)
+{
+	enum direction direction = (enum direction)direction_value;
+	bool horizontal = direction == LAB_DIRECTION_LEFT
+		|| direction == LAB_DIRECTION_RIGHT;
+	bool vertical = direction == LAB_DIRECTION_UP
+		|| direction == LAB_DIRECTION_DOWN;
+	bool scrolling = fingers == 3 && horizontal
+		&& singularity_tiling_scrolling_mode_enabled();
+	bool workspace = fingers == 4 && horizontal;
+	bool overview = fingers == 4 && vertical;
+	if (!scrolling && !workspace && !overview) {
+		return;
+	}
+	control_gesture_finish(true, false);
+	if (workspace && !workspaces_swipe_begin(direction)) {
+		return;
+	}
+	control_gesture.resource = resource;
+	control_gesture.fingers = fingers;
+	control_gesture.direction = direction;
+	control_gesture.workspace = workspace;
+	singularity_gesture_send_begin(fingers, direction);
+}
+
+static void
+handle_update_control(struct wl_client *client, struct wl_resource *resource,
+	wl_fixed_t dx_fixed, wl_fixed_t dy_fixed)
+{
+	if (control_gesture.resource != resource) {
+		return;
+	}
+	double dx = MAX(-32768.0, MIN(32768.0, wl_fixed_to_double(dx_fixed)));
+	double dy = MAX(-32768.0, MIN(32768.0, wl_fixed_to_double(dy_fixed)));
+	if (control_gesture.workspace) {
+		workspaces_swipe_update(dx);
+	}
+	singularity_gesture_send_update(dx, dy);
+}
+
+static void
+handle_end_control(struct wl_client *client, struct wl_resource *resource,
+	uint32_t cancelled, uint32_t committed)
+{
+	if (control_gesture.resource != resource) {
+		return;
+	}
+	control_gesture_finish(cancelled != 0, committed != 0);
+}
+
 static const struct zsingularity_gesture_manager_v1_interface manager_impl = {
 	.toggle_desktop_reveal = handle_toggle_desktop_reveal,
+	.begin_control = handle_begin_control,
+	.update_control = handle_update_control,
+	.end_control = handle_end_control,
 	.destroy = handle_destroy,
 };
 
@@ -245,6 +325,9 @@ static void
 resource_destroy(struct wl_resource *resource)
 {
 	wl_list_remove(wl_resource_get_link(resource));
+	if (control_gesture.resource == resource) {
+		control_gesture_finish(true, false);
+	}
 }
 
 static void
@@ -273,7 +356,7 @@ singularity_gesture_init(void)
 	}
 	wl_list_init(&gesture_manager->resources);
 	gesture_manager->global = wl_global_create(server.wl_display,
-		&zsingularity_gesture_manager_v1_interface, 2,
+		&zsingularity_gesture_manager_v1_interface, 3,
 		gesture_manager, bind_manager);
 }
 
@@ -325,6 +408,7 @@ singularity_gesture_finish(void)
 	desktop_reveal_apply(0.0);
 	desktop_reveal_clear();
 	desktop_reveal.initialized = false;
+	control_gesture_finish(true, false);
 }
 
 bool
@@ -341,6 +425,9 @@ singularity_gesture_send_begin(uint32_t fingers, enum direction direction)
 	}
 	struct wl_resource *resource;
 	wl_resource_for_each(resource, &gesture_manager->resources) {
+		if (resource == control_gesture.resource) {
+			continue;
+		}
 		zsingularity_gesture_manager_v1_send_begin(resource, fingers, direction);
 	}
 }
@@ -353,6 +440,9 @@ singularity_gesture_send_update(double dx, double dy)
 	}
 	struct wl_resource *resource;
 	wl_resource_for_each(resource, &gesture_manager->resources) {
+		if (resource == control_gesture.resource) {
+			continue;
+		}
 		zsingularity_gesture_manager_v1_send_update(resource,
 			wl_fixed_from_double(dx), wl_fixed_from_double(dy));
 	}
@@ -366,6 +456,9 @@ singularity_gesture_send_end(bool cancelled, bool committed)
 	}
 	struct wl_resource *resource;
 	wl_resource_for_each(resource, &gesture_manager->resources) {
+		if (resource == control_gesture.resource) {
+			continue;
+		}
 		zsingularity_gesture_manager_v1_send_end(resource,
 			cancelled ? 1u : 0u, committed ? 1u : 0u);
 	}

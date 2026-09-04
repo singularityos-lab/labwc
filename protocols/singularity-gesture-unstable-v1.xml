@@ -4,7 +4,7 @@
     Copyright 2026 Singularity Desktop contributors
   </copyright>
 
-  <interface name="zsingularity_gesture_manager_v1" version="2">
+  <interface name="zsingularity_gesture_manager_v1" version="3">
     <description summary="desktop gesture progress">
       Reports compositor-owned gestures to the desktop shell so its surfaces
       can follow the user's fingers.
@@ -39,6 +39,25 @@
         Reveals the desktop by moving current-workspace windows toward the
         screen edges, or restores them to their saved geometry.
       </description>
+    </request>
+
+    <request name="begin_control" since="3">
+      <description summary="begin a camera-controlled desktop gesture">
+        Starts a desktop gesture using the same coordinate space and routing
+        as a compositor-owned touchpad gesture.
+      </description>
+      <arg name="fingers" type="uint"/>
+      <arg name="direction" type="uint" enum="direction"/>
+    </request>
+
+    <request name="update_control" since="3">
+      <arg name="dx" type="fixed"/>
+      <arg name="dy" type="fixed"/>
+    </request>
+
+    <request name="end_control" since="3">
+      <arg name="cancelled" type="uint"/>
+      <arg name="committed" type="uint"/>
     </request>
 
   </interface>
