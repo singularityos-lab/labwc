@@ -139,6 +139,7 @@ struct view {
 	enum view_type type;
 	const struct view_impl *impl;
 	struct wl_list link;
+	struct wl_list focus_link;
 
 	/* This is cleared when the view is not in the cycle list */
 	struct wl_list cycle_link;

@@ -637,6 +637,8 @@ handle_focus_change(struct wl_listener *listener, void *data)
 			view_set_activated(server.active_view, false);
 		}
 		if (view) {
+			wl_list_remove(&view->focus_link);
+			wl_list_insert(&server.focus_order, &view->focus_link);
 			view_set_activated(view, true);
 			tablet_pad_enter_surface(seat, surface);
 		}

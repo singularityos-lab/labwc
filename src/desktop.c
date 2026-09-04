@@ -225,6 +225,21 @@ desktop_focus_topmost_view(void)
 }
 
 void
+desktop_focus_previous_view(struct view *exclude)
+{
+	struct view *view;
+	wl_list_for_each(view, &server.focus_order, focus_link) {
+		if (view != exclude && !view->minimized
+				&& view_matches_criteria(view,
+					LAB_VIEW_CRITERIA_CURRENT_WORKSPACE)) {
+			desktop_focus_view(view, /*raise*/ true);
+			return;
+		}
+	}
+	desktop_focus_topmost_view();
+}
+
+void
 desktop_focus_output(struct output *output)
 {
 	if (!output_is_usable(output) || server.input_mode
@@ -444,4 +459,3 @@ get_cursor_context(void)
 	 */
 	return ret;
 }
-

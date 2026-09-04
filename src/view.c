@@ -2509,6 +2509,7 @@ void
 view_init(struct view *view)
 {
 	assert(view);
+	wl_list_init(&view->focus_link);
 
 	wl_signal_init(&view->events.new_app_id);
 	wl_signal_init(&view->events.new_title);
@@ -2610,6 +2611,7 @@ view_destroy(struct view *view)
 	zfree(view->app_id);
 
 	/* Remove view from server.views */
+	wl_list_remove(&view->focus_link);
 	wl_list_remove(&view->link);
 	free(view);
 

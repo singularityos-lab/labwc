@@ -209,6 +209,8 @@ struct server {
 
 	/* front to back order */
 	struct wl_list views;
+	/* most recently focused first */
+	struct wl_list focus_order;
 	uint64_t next_view_creation_id;
 	struct wl_list unmanaged_surfaces;
 
@@ -383,6 +385,7 @@ void desktop_focus_view_or_surface(struct seat *seat, struct view *view,
 	struct wlr_surface *surface, bool raise);
 
 void desktop_arrange_all_views(void);
+void desktop_focus_previous_view(struct view *exclude);
 void desktop_focus_output(struct output *output);
 
 /**
