@@ -212,7 +212,12 @@ edge_from_cursor(struct seat *seat, struct output **dest_output,
 	*edge1 = LAB_EDGE_NONE;
 	*edge2 = LAB_EDGE_NONE;
 
-	if (!view_is_floating(server.grabbed_view)) {
+	/*
+	 * Overlay updates can also be requested by compositor protocols while no
+	 * interactive move is active.  In that case there is no edge-snap
+	 * candidate.  Do not pass the NULL grabbed view to view_is_floating().
+	 */
+	if (!server.grabbed_view || !view_is_floating(server.grabbed_view)) {
 		return false;
 	}
 

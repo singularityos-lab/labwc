@@ -22,6 +22,7 @@ regions_should_snap(void)
 	if (server.input_mode != LAB_INPUT_STATE_MOVE
 			|| wl_list_empty(&rc.regions)
 			|| server.seat.region_prevent_snap
+			|| !server.grabbed_view
 			|| !view_is_floating(server.grabbed_view)) {
 		return false;
 	}
@@ -170,4 +171,3 @@ regions_destroy(struct seat *seat, struct wl_list *regions)
 		zfree(region);
 	}
 }
-

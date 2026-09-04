@@ -115,6 +115,10 @@ handle_set_drop_preview(struct wl_client *client, struct wl_resource *resource,
 		.width = width,
 		.height = height,
 	};
+	if (!manager->drop_preview_active) {
+		overlay_finish(&server.seat);
+		return;
+	}
 	overlay_update(&server.seat);
 }
 
