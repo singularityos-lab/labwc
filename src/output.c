@@ -276,6 +276,13 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 {
 	struct output *output = wl_container_of(listener, output, destroy);
 	struct seat *seat = &server.seat;
+
+	/* A pending retry holds this output; unplugging again would UAF. */
+	if (output->enable_retry_timer) {
+		wl_event_source_remove(output->enable_retry_timer);
+		output->enable_retry_timer = NULL;
+	}
+
 	regions_evacuate_output(output);
 	regions_destroy(seat, &output->regions);
 	if (seat->overlay.active.output == output) {
@@ -499,21 +506,14 @@ output_test_auto(struct wlr_output *wlr_output, struct wlr_output_state *state,
 	return wlr_output_test_state(wlr_output, state);
 }
 
+/* ~2s total, enough for a DP/HDMI link to finish training */
+#define OUTPUT_ENABLE_RETRY_MAX 8
+#define OUTPUT_ENABLE_RETRY_DELAY_MS 250
+
 static void
-configure_new_output(struct output *output)
+finish_output_configuration(struct output *output)
 {
 	struct wlr_output *wlr_output = output->wlr_output;
-
-	wlr_log(WLR_DEBUG, "enable output %s", wlr_output->name);
-	wlr_output_state_set_enabled(&output->pending, true);
-
-	if (!output_test_auto(wlr_output, &output->pending,
-			/* is_client_request */ false)) {
-		wlr_log(WLR_INFO, "mode test failed for output %s",
-			wlr_output->name);
-		wlr_output_state_set_enabled(&output->pending, false);
-		return;
-	}
 
 	if (rc.adaptive_sync == LAB_ADAPTIVE_SYNC_ENABLED) {
 		output_enable_adaptive_sync(output, true);
@@ -534,7 +534,16 @@ configure_new_output(struct output *output)
 	 * Commit the output this way instead, HDR needs a buffer, and
 	 * this commit must be called after the output is added to the
 	 * layout above.
+	 *
+	 * A freshly-created wlr_scene_output has needs_frame false, so
+	 * lab_wlr_scene_output_commit() short-circuits on
+	 * wlr_scene_output_needs_frame() and the atomic commit that binds a
+	 * CRTC to the connector never reaches the kernel -- black screen
+	 * after a DP/HDMI replug, since the unplug destroys the wlr_output
+	 * and the replug comes back through here. Scheduling a frame sets
+	 * needs_frame so the commit actually runs.
 	 */
+	wlr_output_schedule_frame(wlr_output);
 	lab_wlr_scene_output_commit(output->scene_output, &output->pending);
 
 	/*
@@ -542,6 +551,77 @@ configure_new_output(struct output *output)
 	 */
 	wlr_output_effective_resolution(wlr_output,
 		&output->usable_area.width, &output->usable_area.height);
+}
+
+static int
+handle_output_enable_retry(void *data)
+{
+	struct output *output = data;
+	struct wlr_output *wlr_output = output->wlr_output;
+
+	wlr_output_state_set_enabled(&output->pending, true);
+	if (!output_test_auto(wlr_output, &output->pending,
+			/* is_client_request */ false)) {
+		wlr_output_state_set_enabled(&output->pending, false);
+		output->enable_retry_count++;
+		if (output->enable_retry_count >= OUTPUT_ENABLE_RETRY_MAX) {
+			wlr_log(WLR_ERROR,
+				"mode test still failing for output %s after %d "
+				"retries, giving up",
+				wlr_output->name, output->enable_retry_count);
+			return 0;
+		}
+		wlr_log(WLR_INFO,
+			"mode test still failing for output %s, retrying (%d/%d)",
+			wlr_output->name, output->enable_retry_count,
+			OUTPUT_ENABLE_RETRY_MAX);
+		wl_event_source_timer_update(output->enable_retry_timer,
+			OUTPUT_ENABLE_RETRY_DELAY_MS);
+		return 0;
+	}
+
+	wlr_log(WLR_INFO,
+		"output %s passed mode test after %d retr%s, enabling",
+		wlr_output->name, output->enable_retry_count,
+		output->enable_retry_count == 1 ? "y" : "ies");
+	output->enable_retry_count = 0;
+	finish_output_configuration(output);
+	return 0;
+}
+
+static void
+configure_new_output(struct output *output)
+{
+	struct wlr_output *wlr_output = output->wlr_output;
+
+	wlr_log(WLR_DEBUG, "enable output %s", wlr_output->name);
+	wlr_output_state_set_enabled(&output->pending, true);
+
+	if (!output_test_auto(wlr_output, &output->pending,
+			/* is_client_request */ false)) {
+		/*
+		 * Some DP/HDMI transmitters report "connected" before the mode
+		 * list / link training settles, so this first test can fail for
+		 * a display that is really there. Without a retry the output
+		 * stays disabled until a manual `wlr-randr --on`.
+		 */
+		wlr_log(WLR_INFO,
+			"mode test failed for output %s, will retry for up to %dms",
+			wlr_output->name,
+			OUTPUT_ENABLE_RETRY_MAX * OUTPUT_ENABLE_RETRY_DELAY_MS);
+		wlr_output_state_set_enabled(&output->pending, false);
+		if (!output->enable_retry_timer) {
+			output->enable_retry_timer = wl_event_loop_add_timer(
+				server.wl_event_loop, handle_output_enable_retry,
+				output);
+		}
+		output->enable_retry_count = 0;
+		wl_event_source_timer_update(output->enable_retry_timer,
+			OUTPUT_ENABLE_RETRY_DELAY_MS);
+		return;
+	}
+
+	finish_output_configuration(output);
 }
 
 static uint64_t

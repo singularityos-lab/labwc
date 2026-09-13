@@ -27,6 +27,10 @@ struct output {
 	struct wl_listener frame;
 	struct wl_listener request_state;
 
+	/* Bounded retry of the initial mode test; see configure_new_output() */
+	struct wl_event_source *enable_retry_timer;
+	int enable_retry_count;
+
 	/*
 	 * Unique power-of-two ID used in bitsets such as view->outputs.
 	 * (This assumes there are never more than 64 outputs connected
