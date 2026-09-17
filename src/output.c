@@ -535,6 +535,8 @@ configure_new_output(struct output *output)
 	 * this commit must be called after the output is added to the
 	 * layout above.
 	 */
+	/* A fresh scene_output has needs_frame false; the commit binds no CRTC. */
+	wlr_output_schedule_frame(wlr_output);
 	lab_wlr_scene_output_commit(output->scene_output, &output->pending);
 
 	/*
