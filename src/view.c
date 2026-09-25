@@ -205,7 +205,7 @@ view_matches_query(struct view *view, struct view_query *query)
 
 	if (query->desktop) {
 		const char *view_workspace = view->workspace->name;
-		struct workspace *current = server.workspaces.current;
+		struct workspace *current = workspaces_current_on(view->output);
 
 		if (!strcasecmp(query->desktop, "other")) {
 			/* "other" means the view is NOT on the current desktop */
@@ -271,7 +271,7 @@ view_matches_criteria(struct view *view, enum lab_view_criteria criteria)
 		return false;
 	}
 	if (criteria & LAB_VIEW_CRITERIA_CURRENT_WORKSPACE) {
-		if (view->workspace != server.workspaces.current) {
+		if (!workspaces_view_on_current(view)) {
 			return false;
 		}
 	}
@@ -493,6 +493,7 @@ view_set_output(struct view *view, struct output *output)
 		return;
 	}
 	view->output = output;
+	workspaces_view_output_changed(view);
 	/* Show fullscreen views above top-layer */
 	if (view->fullscreen) {
 		desktop_update_top_layer_visibility();
@@ -559,8 +560,8 @@ view_moved(struct view *view)
 	 * views (maximized/tiled/fullscreen) are tied to a particular
 	 * output when they enter that state.
 	 */
-	if (view_is_floating(view)) {
-		view_discover_output(view, NULL);
+	if (view_is_floating(view) && view_discover_output(view, NULL)) {
+		workspaces_view_output_changed(view);
 	}
 	view_update_outputs(view);
 	ssd_update_geometry(view->ssd);
@@ -1615,6 +1616,9 @@ view_move_to_workspace(struct view *view, struct workspace *workspace)
 		view->workspace = workspace;
 		wlr_scene_node_reparent(&view->scene_tree->node,
 			workspace->view_trees[view->layer]);
+		if (workspaces_per_output()) {
+			view_update_visibility(view);
+		}
 	}
 }
 
@@ -1802,6 +1806,7 @@ view_adjust_for_layout_change(struct view *view)
 		new_geo.x += output->scene_output->x;
 		new_geo.y += output->scene_output->y;
 		view->output = output;
+		workspaces_view_output_changed(view);
 	} else {
 		/*
 		 * Otherwise, evacuate the view to another output. Use the last
@@ -1809,7 +1814,9 @@ view_adjust_for_layout_change(struct view *view)
 		 * user reconnects the previous output in a different connector
 		 * or the reconnected output somehow gets a different name.
 		 */
-		view_discover_output(view, &view->last_placement.layout_geo);
+		if (view_discover_output(view, &view->last_placement.layout_geo)) {
+			workspaces_view_output_changed(view);
+		}
 		new_geo = view->last_placement.layout_geo;
 	}
 
@@ -2403,7 +2410,8 @@ mappable_disconnect(struct mappable *mappable)
 void
 view_update_visibility(struct view *view)
 {
-	bool visible = view->mapped && !view->minimized;
+	bool visible = view->mapped && !view->minimized
+		&& (!workspaces_per_output() || workspaces_view_on_current(view));
 	bool enabled = view->scene_tree->node.enabled;
 	bool animation_running = view_animation_is_running(view);
 	if (animation_running && visible && !enabled) {

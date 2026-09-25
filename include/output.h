@@ -5,6 +5,9 @@
 #include <wlr/types/wlr_output.h>
 #include "common/edge.h"
 
+struct workspace;
+struct wlr_ext_workspace_group_handle_v1;
+
 #define LAB_NR_LAYERS (4)
 
 struct output {
@@ -17,6 +20,10 @@ struct output {
 	struct wlr_scene_tree *cycle_osd_tree;
 	struct wlr_scene_tree *session_lock_tree;
 	struct wlr_scene_buffer *workspace_osd;
+
+	struct workspace *workspace_current;
+	struct workspace *workspace_last;
+	struct wlr_ext_workspace_group_handle_v1 *workspace_group;
 
 	/* In output-relative scene coordinates */
 	struct wlr_box usable_area;

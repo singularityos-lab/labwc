@@ -306,6 +306,14 @@ ssd_mode_parse(const char *mode)
 }
 
 void
+ssd_set_visible(struct ssd *ssd, bool visible)
+{
+	if (ssd) {
+		wlr_scene_node_set_enabled(&ssd->tree->node, visible);
+	}
+}
+
+void
 ssd_set_active(struct ssd *ssd, bool active)
 {
 	if (!ssd) {

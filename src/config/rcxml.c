@@ -1437,6 +1437,8 @@ entry(xmlNode *node, char *nodename, char *content)
 		rc.workspace_config.popuptime = atoi(content);
 	} else if (!strcasecmp(nodename, "initial.desktops")) {
 		xstrdup_replace(rc.workspace_config.initial_workspace_name, content);
+	} else if (!strcasecmp(nodename, "perOutput.desktops")) {
+		set_bool(content, &rc.workspace_config.per_output);
 	} else if (!strcasecmp(nodename, "number.desktops")) {
 		rc.workspace_config.min_nr_workspaces = MAX(1, atoi(content));
 	} else if (!strcasecmp(nodename, "popupShow.resize")) {
@@ -1653,6 +1655,7 @@ rcxml_init(void)
 
 	rc.workspace_config.popuptime = INT_MIN;
 	rc.workspace_config.min_nr_workspaces = 1;
+	rc.workspace_config.per_output = false;
 
 	rc.menu_ignore_button_release_period = 250;
 	rc.menu_show_icons = true;

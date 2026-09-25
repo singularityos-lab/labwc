@@ -144,7 +144,12 @@ desktop_focus_view_internal(struct view *view, bool raise, bool allow_delay)
 	 * (unnecessary for omnipresent views).
 	 */
 	if (!view->visible_on_all_workspaces) {
-		workspaces_switch_to(view->workspace, /*update_focus*/ false);
+		if (workspaces_per_output() && output_is_usable(view->output)) {
+			workspaces_switch_output(view->output, view->workspace,
+				/*update_focus*/ false);
+		} else {
+			workspaces_switch_to(view->workspace, /*update_focus*/ false);
+		}
 	}
 
 	/*

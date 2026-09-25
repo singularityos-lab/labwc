@@ -598,6 +598,12 @@ extending outward from the snapped edge.
 *<desktops><prefix>*
 	Set the prefix to use when using "number" above. Default is "Workspace"
 
+*<desktops><perOutput>* [yes|no]
+	Give every output its own current workspace. Switching workspaces
+	affects only the output under the cursor, a window moved to another
+	output joins that output's current workspace, and ext-workspace-v1
+	clients see one workspace group per output. Default is no.
+
 ## THEME
 
 *<theme><name>*

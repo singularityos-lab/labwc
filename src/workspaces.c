@@ -11,6 +11,7 @@
 #include <wlr/types/wlr_ext_workspace_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <wlr/types/wlr_scene.h>
+#include <wlr/util/box.h>
 #include "buffer.h"
 #include "common/font.h"
 #include "common/graphic-helpers.h"
@@ -23,6 +24,7 @@
 #include "labwc.h"
 #include "output.h"
 #include "show-desktop.h"
+#include "ssd.h"
 #include "theme.h"
 #include "view.h"
 
@@ -30,10 +32,19 @@
 #define WORKSPACE_SWIPE_INTERVAL_MS 16
 #define WORKSPACE_SWIPE_FRAMES 12
 
+struct workspace_output_handle {
+	struct wl_list link;
+	struct workspace *workspace;
+	struct output *output;
+	struct wlr_ext_workspace_handle_v1 *ext_workspace;
+};
+
 static struct {
 	bool active;
 	struct workspace *from;
 	struct workspace *to;
+	struct output *output;
+	struct wlr_box output_box;
 	enum direction direction;
 	int width;
 	double position;
@@ -43,6 +54,8 @@ static struct {
 	bool commit;
 	struct wl_event_source *timer;
 } workspace_swipe;
+
+static bool per_output;
 
 /* Internal helpers */
 static size_t
@@ -132,7 +145,7 @@ _osd_update(void)
 		if (!hide_boxes) {
 			x = (width - marker_width) / 2;
 			wl_list_for_each(workspace, &server.workspaces.all, link) {
-				bool active =  workspace == server.workspaces.current;
+				bool active = workspace == workspaces_current_on(output);
 				set_cairo_color(cairo, rc.theme->osd_label_text_color);
 				struct wlr_fbox fbox = {
 					.x = x,
@@ -158,7 +171,8 @@ _osd_update(void)
 		pango_layout_set_ellipsize(layout, PANGO_ELLIPSIZE_END);
 
 		/* Center workspace indicator on the x axis */
-		int req_width = font_width(&rc.font_osd, server.workspaces.current->name);
+		const char *current_name = workspaces_current_on(output)->name;
+		int req_width = font_width(&rc.font_osd, current_name);
 		req_width = MIN(req_width, width - 2 * margin);
 		x = (width - req_width) / 2;
 		if (!hide_boxes) {
@@ -171,7 +185,7 @@ _osd_update(void)
 		pango_layout_set_font_description(layout, desc);
 		pango_layout_set_width(layout, req_width * PANGO_SCALE);
 		pango_font_description_free(desc);
-		pango_layout_set_text(layout, server.workspaces.current->name, -1);
+		pango_layout_set_text(layout, current_name, -1);
 		pango_cairo_show_layout(cairo, layout);
 
 		g_object_unref(layout);
@@ -233,12 +247,162 @@ handle_ext_workspace_commit(struct wl_listener *listener, void *data)
 
 	struct wlr_ext_workspace_v1_request *req;
 	wl_list_for_each(req, event->requests, link) {
-		if (req->type == WLR_EXT_WORKSPACE_V1_REQUEST_ACTIVATE) {
-			struct workspace *workspace = req->activate.workspace->data;
-			workspaces_switch_to(workspace, /* update_focus */ true);
-			wlr_log(WLR_INFO, "activating workspace %s", workspace->name);
+		if (req->type != WLR_EXT_WORKSPACE_V1_REQUEST_ACTIVATE) {
+			continue;
+		}
+		if (per_output) {
+			struct workspace_output_handle *handle =
+				req->activate.workspace->data;
+			workspaces_switch_output(handle->output,
+				handle->workspace, /* update_focus */ true);
+			wlr_log(WLR_INFO, "activating workspace %s on %s",
+				handle->workspace->name,
+				handle->output->wlr_output->name);
+			continue;
+		}
+		struct workspace *workspace = req->activate.workspace->data;
+		workspaces_switch_to(workspace, /* update_focus */ true);
+		wlr_log(WLR_INFO, "activating workspace %s", workspace->name);
+	}
+}
+
+static void
+ext_global_add_workspace(struct workspace *workspace)
+{
+	workspace->ext_workspace = wlr_ext_workspace_handle_v1_create(
+		server.workspaces.ext_manager, /*id*/ NULL,
+		EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE);
+	workspace->ext_workspace->data = workspace;
+	wlr_ext_workspace_handle_v1_set_group(
+		workspace->ext_workspace, server.workspaces.ext_group);
+	wlr_ext_workspace_handle_v1_set_name(workspace->ext_workspace,
+		workspace->name);
+	wlr_ext_workspace_handle_v1_set_active(workspace->ext_workspace,
+		workspace == server.workspaces.current);
+}
+
+static void
+ext_output_add_workspace(struct output *output, struct workspace *workspace)
+{
+	struct workspace_output_handle *handle = znew(*handle);
+	handle->workspace = workspace;
+	handle->output = output;
+	handle->ext_workspace = wlr_ext_workspace_handle_v1_create(
+		server.workspaces.ext_manager, /*id*/ NULL,
+		EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE);
+	handle->ext_workspace->data = handle;
+	wlr_ext_workspace_handle_v1_set_group(handle->ext_workspace,
+		output->workspace_group);
+	wlr_ext_workspace_handle_v1_set_name(handle->ext_workspace,
+		workspace->name);
+	wlr_ext_workspace_handle_v1_set_active(handle->ext_workspace,
+		workspace == output->workspace_current);
+	wl_list_append(&workspace->output_handles, &handle->link);
+}
+
+static void
+ext_output_handle_destroy(struct workspace_output_handle *handle)
+{
+	wlr_ext_workspace_handle_v1_destroy(handle->ext_workspace);
+	wl_list_remove(&handle->link);
+	free(handle);
+}
+
+static void
+ext_output_create(struct output *output)
+{
+	if (output->workspace_group) {
+		return;
+	}
+	output->workspace_group = wlr_ext_workspace_group_handle_v1_create(
+		server.workspaces.ext_manager, /*caps*/ 0);
+	wlr_ext_workspace_group_handle_v1_output_enter(
+		output->workspace_group, output->wlr_output);
+	struct workspace *workspace;
+	wl_list_for_each(workspace, &server.workspaces.all, link) {
+		ext_output_add_workspace(output, workspace);
+	}
+}
+
+static void
+ext_output_destroy(struct output *output)
+{
+	if (!output->workspace_group) {
+		return;
+	}
+	struct workspace *workspace;
+	wl_list_for_each(workspace, &server.workspaces.all, link) {
+		struct workspace_output_handle *handle, *tmp;
+		wl_list_for_each_safe(handle, tmp, &workspace->output_handles, link) {
+			if (handle->output == output) {
+				ext_output_handle_destroy(handle);
+			}
 		}
 	}
+	wlr_ext_workspace_group_handle_v1_destroy(output->workspace_group);
+	output->workspace_group = NULL;
+}
+
+static void
+ext_global_create(void)
+{
+	server.workspaces.ext_group = wlr_ext_workspace_group_handle_v1_create(
+		server.workspaces.ext_manager, /*caps*/ 0);
+	struct workspace *workspace;
+	wl_list_for_each(workspace, &server.workspaces.all, link) {
+		ext_global_add_workspace(workspace);
+	}
+	struct output *output;
+	wl_list_for_each(output, &server.outputs, link) {
+		if (output_is_usable(output)) {
+			wlr_ext_workspace_group_handle_v1_output_enter(
+				server.workspaces.ext_group, output->wlr_output);
+		}
+	}
+}
+
+static void
+ext_global_destroy(void)
+{
+	struct workspace *workspace;
+	wl_list_for_each(workspace, &server.workspaces.all, link) {
+		if (workspace->ext_workspace) {
+			wlr_ext_workspace_handle_v1_destroy(workspace->ext_workspace);
+			workspace->ext_workspace = NULL;
+		}
+	}
+	if (server.workspaces.ext_group) {
+		wlr_ext_workspace_group_handle_v1_destroy(server.workspaces.ext_group);
+		server.workspaces.ext_group = NULL;
+	}
+}
+
+static void
+ext_output_set_active(struct output *output, struct workspace *workspace,
+		bool active)
+{
+	struct workspace_output_handle *handle;
+	wl_list_for_each(handle, &workspace->output_handles, link) {
+		if (handle->output == output) {
+			wlr_ext_workspace_handle_v1_set_active(
+				handle->ext_workspace, active);
+		}
+	}
+}
+
+static struct output *
+active_output(void)
+{
+	struct output *output = output_nearest_to_cursor();
+	if (output_is_usable(output) && output->workspace_current) {
+		return output;
+	}
+	wl_list_for_each(output, &server.outputs, link) {
+		if (output_is_usable(output) && output->workspace_current) {
+			return output;
+		}
+	}
+	return NULL;
 }
 
 /* Internal API */
@@ -255,15 +419,22 @@ add_workspace(const char *name)
 	workspace->view_trees[VIEW_LAYER_ALWAYS_ON_TOP] =
 		lab_wlr_scene_tree_create(workspace->tree);
 	wl_list_append(&server.workspaces.all, &workspace->link);
-	wlr_scene_node_set_enabled(&workspace->tree->node, false);
+	wl_list_init(&workspace->output_handles);
+	wlr_scene_node_set_enabled(&workspace->tree->node, per_output);
 
-	workspace->ext_workspace = wlr_ext_workspace_handle_v1_create(
-		server.workspaces.ext_manager, /*id*/ NULL,
-		EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE);
-	workspace->ext_workspace->data = workspace;
-	wlr_ext_workspace_handle_v1_set_group(
-		workspace->ext_workspace, server.workspaces.ext_group);
-	wlr_ext_workspace_handle_v1_set_name(workspace->ext_workspace, name);
+	if (!per_output) {
+		ext_global_add_workspace(workspace);
+		return;
+	}
+	if (!server.outputs.next) {
+		return;
+	}
+	struct output *output;
+	wl_list_for_each(output, &server.outputs, link) {
+		if (output->workspace_group) {
+			ext_output_add_workspace(output, workspace);
+		}
+	}
 }
 
 static struct workspace *
@@ -374,7 +545,7 @@ _osd_handle_timeout(void *data)
 }
 
 static void
-_osd_show(void)
+_osd_show(struct output *only)
 {
 	if (!rc.workspace_config.popuptime) {
 		return;
@@ -383,6 +554,9 @@ _osd_show(void)
 	_osd_update();
 	struct output *output;
 	wl_list_for_each(output, &server.outputs, link) {
+		if (only && output != only) {
+			continue;
+		}
 		if (output_is_usable(output) && output->workspace_osd) {
 			wlr_scene_node_set_enabled(&output->workspace_osd->node, true);
 		}
@@ -408,8 +582,11 @@ workspaces_init(void)
 	server.workspaces.ext_manager = wlr_ext_workspace_manager_v1_create(
 		server.wl_display, EXT_WORKSPACES_VERSION);
 
-	server.workspaces.ext_group = wlr_ext_workspace_group_handle_v1_create(
-		server.workspaces.ext_manager, /*caps*/ 0);
+	per_output = rc.workspace_config.per_output;
+	if (!per_output) {
+		server.workspaces.ext_group = wlr_ext_workspace_group_handle_v1_create(
+			server.workspaces.ext_manager, /*caps*/ 0);
+	}
 
 	server.workspaces.on_ext_manager.commit.notify = handle_ext_workspace_commit;
 	wl_signal_add(&server.workspaces.ext_manager->events.commit,
@@ -440,7 +617,9 @@ workspaces_init(void)
 
 	server.workspaces.current = initial;
 	wlr_scene_node_set_enabled(&initial->tree->node, true);
-	wlr_ext_workspace_handle_v1_set_active(initial->ext_workspace, true);
+	if (initial->ext_workspace) {
+		wlr_ext_workspace_handle_v1_set_active(initial->ext_workspace, true);
+	}
 }
 
 /*
@@ -452,6 +631,15 @@ void
 workspaces_switch_to(struct workspace *target, bool update_focus)
 {
 	assert(target);
+	if (per_output) {
+		struct output *output = active_output();
+		if (output) {
+			workspaces_switch_output(output, target, update_focus);
+		} else {
+			server.workspaces.current = target;
+		}
+		return;
+	}
 	if (target == server.workspaces.current) {
 		return;
 	}
@@ -501,7 +689,7 @@ workspaces_switch_to(struct workspace *target, bool update_focus)
 	}
 
 	/* And finally show the OSD */
-	_osd_show();
+	_osd_show(NULL);
 
 	/*
 	 * Make sure we are not carrying around a
@@ -517,16 +705,228 @@ workspaces_switch_to(struct workspace *target, bool update_focus)
 	show_desktop_reset();
 }
 
+void
+workspaces_switch_output(struct output *output, struct workspace *target,
+		bool update_focus)
+{
+	assert(output);
+	assert(target);
+	if (!per_output) {
+		workspaces_switch_to(target, update_focus);
+		return;
+	}
+	struct workspace *from = output->workspace_current;
+	if (target == from) {
+		return;
+	}
+	output->workspace_last = from;
+	output->workspace_current = target;
+	if (from) {
+		ext_output_set_active(output, from, false);
+	}
+	ext_output_set_active(output, target, true);
+
+	struct view *view;
+	wl_list_for_each_reverse(view, &server.views, link) {
+		if (view->output != output) {
+			continue;
+		}
+		if (view->visible_on_all_workspaces || view == server.grabbed_view) {
+			view_move_to_workspace(view, target);
+		}
+		view_update_visibility(view);
+	}
+
+	if (output == active_output()) {
+		server.workspaces.last = from;
+		server.workspaces.current = target;
+	}
+
+	if (update_focus) {
+		struct view *active_view = server.active_view;
+		bool keep = active_view && (active_view->visible_on_all_workspaces
+			|| (active_view->output != output
+				&& workspaces_view_on_current(active_view)));
+		if (!keep) {
+			struct view *topmost = NULL;
+			for_each_view(view, &server.views,
+					LAB_VIEW_CRITERIA_CURRENT_WORKSPACE) {
+				if (view->output == output && !view->minimized) {
+					topmost = view;
+					break;
+				}
+			}
+			if (topmost) {
+				desktop_focus_view(topmost, /*raise*/ true);
+			} else {
+				desktop_focus_topmost_view();
+			}
+		}
+	}
+
+	_osd_show(output);
+	cursor_update_focus();
+	desktop_update_top_layer_visibility();
+	show_desktop_reset();
+}
+
+bool
+workspaces_per_output(void)
+{
+	return per_output;
+}
+
+struct workspace *
+workspaces_current_on(struct output *output)
+{
+	if (per_output && output && output->workspace_current) {
+		return output->workspace_current;
+	}
+	return server.workspaces.current;
+}
+
+bool
+workspaces_view_on_current(struct view *view)
+{
+	return view->workspace == workspaces_current_on(view->output);
+}
+
+void
+workspaces_output_enter(struct output *output)
+{
+	if (!per_output) {
+		if (server.workspaces.ext_group) {
+			wlr_ext_workspace_group_handle_v1_output_enter(
+				server.workspaces.ext_group, output->wlr_output);
+		}
+		return;
+	}
+	if (!output->workspace_current) {
+		output->workspace_current = server.workspaces.current;
+	}
+	ext_output_create(output);
+}
+
+void
+workspaces_output_leave(struct output *output)
+{
+	if (!per_output) {
+		if (server.workspaces.ext_group) {
+			wlr_ext_workspace_group_handle_v1_output_leave(
+				server.workspaces.ext_group, output->wlr_output);
+		}
+		return;
+	}
+	ext_output_destroy(output);
+	if (workspace_swipe.output == output) {
+		workspace_swipe.output = NULL;
+	}
+}
+
+void
+workspaces_track_cursor(void)
+{
+	if (!per_output) {
+		return;
+	}
+	struct output *output = output_nearest_to_cursor();
+	if (!output_is_usable(output) || !output->workspace_current
+			|| output->workspace_current == server.workspaces.current) {
+		return;
+	}
+	server.workspaces.current = output->workspace_current;
+	server.workspaces.last = output->workspace_last
+		? output->workspace_last : output->workspace_current;
+}
+
+void
+workspaces_view_output_changed(struct view *view)
+{
+	if (!per_output || !view->output || !view->output->workspace_current
+			|| !view->workspace || !view->scene_tree
+			|| workspace_swipe.active) {
+		return;
+	}
+	if (view->workspace != view->output->workspace_current) {
+		view_move_to_workspace(view, view->output->workspace_current);
+	}
+}
+
+static bool
+swipe_view_slides(struct view *view)
+{
+	return view->output == workspace_swipe.output && view->mapped
+		&& !view->minimized && !view->visible_on_all_workspaces
+		&& (view->workspace == workspace_swipe.from
+			|| view->workspace == workspace_swipe.to);
+}
+
+static void
+swipe_view_clip(struct view *view, int offset)
+{
+	wlr_scene_node_set_position(&view->scene_tree->node,
+		view->current.x + offset, view->current.y);
+	if (!view->content_tree) {
+		return;
+	}
+	struct wlr_box shifted = view->current;
+	shifted.x += offset;
+	struct wlr_box visible;
+	if (!wlr_box_intersection(&visible, &shifted,
+			&workspace_swipe.output_box)) {
+		wlr_scene_node_set_enabled(&view->scene_tree->node, false);
+		return;
+	}
+	wlr_scene_node_set_enabled(&view->scene_tree->node, true);
+	struct wlr_box clip = {
+		.x = visible.x - shifted.x,
+		.y = visible.y - shifted.y,
+		.width = visible.width,
+		.height = visible.height,
+	};
+	wlr_scene_subsurface_tree_set_clip(&view->content_tree->node, &clip);
+	bool whole = visible.width == shifted.width
+		&& visible.height == shifted.height;
+	if (view->ssd) {
+		ssd_set_visible(view->ssd, whole);
+	}
+}
+
+static void
+swipe_view_restore(struct view *view)
+{
+	wlr_scene_node_set_position(&view->scene_tree->node,
+		view->current.x, view->current.y);
+	if (view->content_tree) {
+		wlr_scene_subsurface_tree_set_clip(&view->content_tree->node, NULL);
+	}
+	if (view->ssd) {
+		ssd_set_visible(view->ssd, true);
+	}
+	view_update_visibility(view);
+}
+
 static void
 workspace_swipe_position(double position)
 {
 	workspace_swipe.position = position;
-	wlr_scene_node_set_position(&workspace_swipe.from->tree->node,
-		(int)position, 0);
 	int target_x = workspace_swipe.direction == LAB_DIRECTION_LEFT
 		? workspace_swipe.width + (int)position
 		: -workspace_swipe.width + (int)position;
-	wlr_scene_node_set_position(&workspace_swipe.to->tree->node, target_x, 0);
+	if (!workspace_swipe.output) {
+		wlr_scene_node_set_position(&workspace_swipe.from->tree->node,
+			(int)position, 0);
+		wlr_scene_node_set_position(&workspace_swipe.to->tree->node,
+			target_x, 0);
+		return;
+	}
+	struct view *view;
+	wl_list_for_each(view, &server.views, link) {
+		if (swipe_view_slides(view)) {
+			swipe_view_clip(view, view->workspace == workspace_swipe.from
+				? (int)position : target_x);
+		}
+	}
 }
 
 static void
@@ -535,6 +935,23 @@ workspace_swipe_finish(void)
 	if (workspace_swipe.timer) {
 		wl_event_source_remove(workspace_swipe.timer);
 		workspace_swipe.timer = NULL;
+	}
+	struct output *output = workspace_swipe.output;
+	if (per_output) {
+		workspace_swipe.active = false;
+		struct view *view;
+		wl_list_for_each(view, &server.views, link) {
+			if (swipe_view_slides(view)) {
+				swipe_view_restore(view);
+			}
+		}
+		if (workspace_swipe.commit && output) {
+			workspaces_switch_output(output, workspace_swipe.to, true);
+		}
+		workspace_swipe.from = NULL;
+		workspace_swipe.to = NULL;
+		workspace_swipe.output = NULL;
+		return;
 	}
 	wlr_scene_node_set_position(&workspace_swipe.from->tree->node, 0, 0);
 	wlr_scene_node_set_position(&workspace_swipe.to->tree->node, 0, 0);
@@ -584,25 +1001,35 @@ workspaces_swipe_begin(enum direction direction)
 	if (workspace_swipe.active) {
 		workspace_swipe_finish();
 	}
+	struct output *output = per_output ? active_output() : NULL;
+	if (per_output && !output) {
+		return false;
+	}
+	struct workspace *from = workspaces_current_on(output);
 	struct workspace *target = direction == LAB_DIRECTION_LEFT
-		? get_next(server.workspaces.current, &server.workspaces.all, true)
-		: get_prev(server.workspaces.current, &server.workspaces.all, true);
-	if (!target || target == server.workspaces.current) {
+		? get_next(from, &server.workspaces.all, true)
+		: get_prev(from, &server.workspaces.all, true);
+	if (!target || target == from) {
 		return false;
 	}
 	struct wlr_box layout_box;
-	wlr_output_layout_get_box(server.output_layout, NULL, &layout_box);
+	wlr_output_layout_get_box(server.output_layout,
+		output ? output->wlr_output : NULL, &layout_box);
 	if (layout_box.width < 1) {
 		return false;
 	}
 	workspace_swipe.active = true;
-	workspace_swipe.from = server.workspaces.current;
+	workspace_swipe.from = from;
 	workspace_swipe.to = target;
+	workspace_swipe.output = output;
+	workspace_swipe.output_box = layout_box;
 	workspace_swipe.direction = direction;
 	workspace_swipe.width = layout_box.width;
 	workspace_swipe.position = 0;
 	workspace_swipe.timer = NULL;
-	wlr_scene_node_set_enabled(&target->tree->node, true);
+	if (!output) {
+		wlr_scene_node_set_enabled(&target->tree->node, true);
+	}
 	workspace_swipe_position(0);
 	return true;
 }
@@ -691,13 +1118,70 @@ workspaces_find(struct workspace *anchor, const char *name, bool wrap)
 }
 
 static void
+set_per_output(bool enable)
+{
+	if (enable == per_output) {
+		return;
+	}
+	if (workspace_swipe.active) {
+		workspace_swipe.commit = false;
+		workspace_swipe_finish();
+	}
+
+	struct workspace *workspace;
+	struct output *output;
+	if (enable) {
+		ext_global_destroy();
+		per_output = true;
+		wl_list_for_each(workspace, &server.workspaces.all, link) {
+			wlr_scene_node_set_enabled(&workspace->tree->node, true);
+		}
+		wl_list_for_each(output, &server.outputs, link) {
+			if (!output_is_usable(output)) {
+				continue;
+			}
+			output->workspace_current = server.workspaces.current;
+			output->workspace_last = server.workspaces.last;
+			ext_output_create(output);
+		}
+	} else {
+		wl_list_for_each(output, &server.outputs, link) {
+			ext_output_destroy(output);
+			output->workspace_current = NULL;
+			output->workspace_last = NULL;
+		}
+		per_output = false;
+		wl_list_for_each(workspace, &server.workspaces.all, link) {
+			wlr_scene_node_set_enabled(&workspace->tree->node,
+				workspace == server.workspaces.current);
+		}
+		ext_global_create();
+	}
+
+	struct view *view;
+	wl_list_for_each(view, &server.views, link) {
+		view_update_visibility(view);
+	}
+	desktop_focus_topmost_view();
+	cursor_update_focus();
+	desktop_update_top_layer_visibility();
+	wlr_log(WLR_INFO, "per-output workspaces %s", enable ? "enabled" : "disabled");
+}
+
+static void
 destroy_workspace(struct workspace *workspace)
 {
 	wlr_scene_node_destroy(&workspace->tree->node);
 	zfree(workspace->name);
 	wl_list_remove(&workspace->link);
 
-	wlr_ext_workspace_handle_v1_destroy(workspace->ext_workspace);
+	if (workspace->ext_workspace) {
+		wlr_ext_workspace_handle_v1_destroy(workspace->ext_workspace);
+	}
+	struct workspace_output_handle *handle, *tmp;
+	wl_list_for_each_safe(handle, tmp, &workspace->output_handles, link) {
+		ext_output_handle_destroy(handle);
+	}
 	free(workspace);
 }
 
@@ -730,13 +1214,21 @@ workspaces_reconfigure(void)
 			wlr_log(WLR_DEBUG, "Renaming workspace \"%s\" to \"%s\"",
 				workspace->name, conf->name);
 			xstrdup_replace(workspace->name, conf->name);
-			wlr_ext_workspace_handle_v1_set_name(
-				workspace->ext_workspace, workspace->name);
+			if (workspace->ext_workspace) {
+				wlr_ext_workspace_handle_v1_set_name(
+					workspace->ext_workspace, workspace->name);
+			}
+			struct workspace_output_handle *handle;
+			wl_list_for_each(handle, &workspace->output_handles, link) {
+				wlr_ext_workspace_handle_v1_set_name(
+					handle->ext_workspace, workspace->name);
+			}
 		}
 		workspace_link = workspace_link->next;
 	}
 
 	if (workspace_link == &server.workspaces.all) {
+		set_per_output(rc.workspace_config.per_output);
 		return;
 	}
 
@@ -759,6 +1251,16 @@ workspaces_reconfigure(void)
 			}
 		}
 
+		struct output *output;
+		wl_list_for_each(output, &server.outputs, link) {
+			if (output->workspace_current == workspace) {
+				workspaces_switch_output(output, first_workspace,
+					/* update_focus */ true);
+			}
+			if (output->workspace_last == workspace) {
+				output->workspace_last = first_workspace;
+			}
+		}
 		if (server.workspaces.current == workspace) {
 			workspaces_switch_to(first_workspace,
 				/* update_focus */ true);
@@ -770,6 +1272,7 @@ workspaces_reconfigure(void)
 		workspace_link = workspace_link->next;
 		destroy_workspace(workspace);
 	}
+	set_per_output(rc.workspace_config.per_output);
 }
 
 void

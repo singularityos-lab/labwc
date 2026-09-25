@@ -37,6 +37,7 @@
 #include "protocols/singularity-tiling.h"
 #include "ssd.h"
 #include "view.h"
+#include "workspaces.h"
 #include "xwayland.h"
 
 #if WLR_HAS_LIBINPUT_BACKEND
@@ -921,6 +922,7 @@ preprocess_cursor_motion(struct seat *seat, struct wlr_pointer *pointer,
 	 * without any input.
 	 */
 	wlr_cursor_move(seat->cursor, &pointer->base, dx, dy);
+	workspaces_track_cursor();
 	double sx, sy;
 	bool notify = cursor_process_motion(time_msec, &sx, &sy);
 	if (notify) {

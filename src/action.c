@@ -1355,13 +1355,21 @@ run_action(struct view *view, struct action *action,
 		 * removed the action during the initial parsing step as it is
 		 * a required argument for both SendToDesktop and GoToDesktop.
 		 */
-		struct workspace *target_workspace = workspaces_find(
-			server.workspaces.current, to, wrap);
+		workspaces_track_cursor();
+		struct output *workspace_output = NULL;
+		if (workspaces_per_output()) {
+			workspace_output = view && action->type == ACTION_TYPE_SEND_TO_DESKTOP
+				? view->output : output_nearest_to_cursor();
+		}
+		struct workspace *anchor = workspaces_current_on(workspace_output);
+		struct workspace *target_workspace = workspaces_find(anchor, to, wrap);
 		if (action->type == ACTION_TYPE_GO_TO_DESKTOP) {
 			bool toggle = action_get_bool(action, "toggle", false);
-			if (target_workspace == server.workspaces.current
-				&& toggle) {
-				target_workspace = server.workspaces.last;
+			if (target_workspace == anchor && toggle) {
+				target_workspace = workspace_output
+					&& workspace_output->workspace_last
+					? workspace_output->workspace_last
+					: server.workspaces.last;
 			}
 		}
 		if (!target_workspace) {
@@ -1376,7 +1384,10 @@ run_action(struct view *view, struct action *action,
 				desktop_focus_topmost_view();
 			}
 		}
-		if (follow) {
+		if (follow && output_is_usable(workspace_output)) {
+			workspaces_switch_output(workspace_output, target_workspace,
+				/*update_focus*/ true);
+		} else if (follow) {
 			workspaces_switch_to(target_workspace,
 				/*update_focus*/ true);
 		}
