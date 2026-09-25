@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <assert.h>
+#include <dlfcn.h>
 #include <stdbool.h>
 #include <strings.h>
 #include <wlr/config.h>
@@ -107,6 +108,48 @@ get_category(struct wlr_input_device *device)
 
 	/* Use default profile as a fallback */
 	return libinput_category_get_default();
+}
+#endif
+
+#if WLR_HAS_LIBINPUT_BACKEND
+/*
+ * Edge natural scrolling and circular scrolling come from the Singularity
+ * libinput fork. Look them up at runtime so labwc keeps working on a stock
+ * libinput, where these options are simply unavailable.
+ */
+static void
+configure_scroll_extensions(struct libinput_device *libinput_dev,
+		struct libinput_category *dc)
+{
+	static enum libinput_config_status (*set_edge_natural)(
+		struct libinput_device *, int);
+	static enum libinput_config_status (*set_circular)(
+		struct libinput_device *, int);
+	static bool looked_up;
+
+	if (!looked_up) {
+		set_edge_natural = dlsym(RTLD_DEFAULT,
+			"libinput_device_config_scroll_set_edge_natural_scroll_enabled");
+		set_circular = dlsym(RTLD_DEFAULT,
+			"libinput_device_config_scroll_set_circular_enabled");
+		looked_up = true;
+	}
+
+	if (set_edge_natural) {
+		int enabled = dc->edge_natural_scroll >= 0
+			? dc->edge_natural_scroll
+			: libinput_device_config_scroll_get_natural_scroll_enabled(
+				libinput_dev);
+		set_edge_natural(libinput_dev, enabled);
+	} else if (dc->edge_natural_scroll >= 0) {
+		wlr_log(WLR_INFO, "edge natural scroll needs the Singularity libinput");
+	}
+
+	if (set_circular) {
+		set_circular(libinput_dev, dc->circular_scroll > 0);
+	} else if (dc->circular_scroll > 0) {
+		wlr_log(WLR_INFO, "circular scroll needs the Singularity libinput");
+	}
 }
 #endif
 
@@ -320,13 +363,21 @@ configure_libinput(struct wlr_input_device *wlr_input_device)
 		wlr_log(WLR_INFO, "scroll method not configured");
 	} else if (dc->scroll_method != LIBINPUT_CONFIG_SCROLL_NO_SCROLL
 			&& (libinput_device_config_scroll_get_methods(libinput_dev)
-				& dc->scroll_method) == 0) {
+				& dc->scroll_method) != (uint32_t)dc->scroll_method) {
 		wlr_log(WLR_INFO, "scroll method not supported");
 	} else {
 		wlr_log(WLR_INFO, "scroll method configured (%d)",
 			dc->scroll_method);
-		libinput_device_config_scroll_set_method(libinput_dev, dc->scroll_method);
+		if (libinput_device_config_scroll_set_method(libinput_dev,
+				dc->scroll_method) != LIBINPUT_CONFIG_STATUS_SUCCESS
+				&& (dc->scroll_method & LIBINPUT_CONFIG_SCROLL_2FG)) {
+			wlr_log(WLR_INFO, "scroll method rejected, using two-finger");
+			libinput_device_config_scroll_set_method(libinput_dev,
+				LIBINPUT_CONFIG_SCROLL_2FG);
+		}
 	}
+
+	configure_scroll_extensions(libinput_dev, dc);
 
 	libinput_device_config_scroll_set_button(libinput_dev,
 		libinput_device_config_scroll_get_default_button(libinput_dev));

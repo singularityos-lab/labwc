@@ -814,6 +814,10 @@ fill_libinput_category(xmlNode *node)
 			}
 		} else if (!strcasecmp(key, "naturalScroll")) {
 			set_bool_as_int(content, &category->natural_scroll);
+		} else if (!strcasecmp(key, "naturalScrollEdge")) {
+			set_bool_as_int(content, &category->edge_natural_scroll);
+		} else if (!strcasecmp(key, "circularScroll")) {
+			set_bool_as_int(content, &category->circular_scroll);
 		} else if (!strcasecmp(key, "leftHanded")) {
 			set_bool_as_int(content, &category->left_handed);
 		} else if (!strcasecmp(key, "pointerSpeed")) {
@@ -929,6 +933,10 @@ fill_libinput_category(xmlNode *node)
 			} else if (!strcasecmp(content, "twofinger")) {
 				category->scroll_method =
 					LIBINPUT_CONFIG_SCROLL_2FG;
+			} else if (!strcasecmp(content, "twofingerAndEdge")) {
+				category->scroll_method =
+					LIBINPUT_CONFIG_SCROLL_2FG
+					| LIBINPUT_CONFIG_SCROLL_EDGE;
 			} else if (!strcasecmp(content, "onbutton")) {
 				category->scroll_method =
 					LIBINPUT_CONFIG_SCROLL_ON_BUTTON_DOWN;

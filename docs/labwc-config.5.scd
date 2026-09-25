@@ -1174,6 +1174,8 @@ Note: To rotate touch events with output rotation, use the libinput
     <disableWhileTyping></disableWhileTyping>
     <clickMethod></clickMethod>
     <scrollMethod></scrollMethod>
+    <naturalScrollEdge></naturalScrollEdge>
+    <circularScroll></circularScroll>
     <scrollButton></scrollButton>
     <sendEventsMode></sendEventsMode>
     <calibrationMatrix></calibrationMatrix>
@@ -1279,7 +1281,7 @@ Note: To rotate touch events with output rotation, use the libinput
 
 	The default method depends on the touchpad hardware.
 
-*<libinput><device><scrollMethod>* [none|twofinger|edge|onbutton]
+*<libinput><device><scrollMethod>* [none|twofinger|edge|twofingerAndEdge|onbutton]
 	Configure the method by which physical movements are mapped to scroll events.
 
 	The scroll methods available are:
@@ -1287,10 +1289,24 @@ Note: To rotate touch events with output rotation, use the libinput
 	  touchpad, then moving those fingers vertically or horizontally.
 	- *edge* - Scroll by moving a single finger along the right edge
 	  (vertical scroll) or bottom edge (horizontal scroll).
+	- *twofingerAndEdge* - Both *twofinger* and *edge* scrolling. Requires
+	  the Singularity libinput, otherwise *twofinger* is used.
 	- *onbutton* - Scroll by pressing a button.
 	- *none* - No scroll events will be produced.
 
 	The default method depends on the touchpad hardware.
+
+*<libinput><device><naturalScrollEdge>* [yes|no]
+	Set the direction of edge scrolling independently of *naturalScroll*,
+	which then only applies to two-finger scrolling. When unset, edge
+	scrolling follows *naturalScroll*. Requires the Singularity libinput.
+
+*<libinput><device><circularScroll>* [yes|no]
+	Keep edge scrolling while the finger leaves the edge and moves around
+	the touchpad center. Starting on the right edge scrolls vertically,
+	clockwise scrolling down; starting on the bottom edge scrolls
+	horizontally, counter-clockwise scrolling right. Requires edge
+	scrolling and the Singularity libinput. Default is no.
 
 *<libinput><device><scrollButton>* [button]
 	Set the button used for the *onbutton* scroll method.
