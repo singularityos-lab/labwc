@@ -17,6 +17,7 @@
 #include "labwc.h"
 #include "ssd.h"
 #include "view.h"
+#include "xwayland.h"
 
 /* Holds layout -> surface offsets to report motion events in relative coords */
 struct touch_point {
@@ -65,11 +66,11 @@ touch_get_coords(struct seat *seat, struct wlr_touch *touch, double x, double y,
 	struct wlr_scene_node *node =
 		wlr_scene_node_at(&server.scene->tree.node, lx, ly, &sx, &sy);
 
-	*x_offset = lx - sx;
-	*y_offset = ly - sy;
-
 	/* Find the surface and return it if it accepts touch events */
 	struct wlr_surface *surface = lab_wlr_surface_from_node(node);
+	double scale = xwayland_surface_scale(surface);
+	*x_offset = lx - sx / scale;
+	*y_offset = ly - sy / scale;
 
 	if (surface && !wlr_surface_accepts_touch(surface, seat->wlr_seat)) {
 		surface = NULL;
@@ -98,8 +99,9 @@ handle_touch_motion(struct wl_listener *listener, void *data)
 					&event->touch->base, event->x, event->y, &lx, &ly);
 
 				/* Apply offsets to get surface coords before reporting event */
-				double sx = lx - touch_point->x_offset;
-				double sy = ly - touch_point->y_offset;
+				double scale = xwayland_surface_scale(touch_point->surface);
+				double sx = (lx - touch_point->x_offset) * scale;
+				double sy = (ly - touch_point->y_offset) * scale;
 
 				if (touch_point_count == 1) {
 					wlr_cursor_warp_absolute(seat->cursor, &event->touch->base,
@@ -160,8 +162,9 @@ handle_touch_down(struct wl_listener *listener, void *data)
 			&event->touch->base, event->x, event->y, &lx, &ly);
 
 		/* Apply offsets to get surface coords before reporting event */
-		double sx = lx - x_offset;
-		double sy = ly - y_offset;
+		double scale = xwayland_surface_scale(touch_point->surface);
+		double sx = (lx - x_offset) * scale;
+		double sy = (ly - y_offset) * scale;
 
 		struct view *view = view_from_wlr_surface(touch_point->surface);
 		struct mousebind *mousebind;

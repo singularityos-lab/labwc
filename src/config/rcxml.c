@@ -1210,6 +1210,8 @@ entry(xmlNode *node, char *nodename, char *content)
 		set_bool(content, &rc.reuse_output_mode);
 	} else if (!strcasecmp(nodename, "xwaylandPersistence.core")) {
 		set_bool(content, &rc.xwayland_persistence);
+	} else if (!strcasecmp(nodename, "xwaylandNativeScaling.core")) {
+		set_bool(content, &rc.xwayland_native_scaling);
 	} else if (!strcasecmp(nodename, "primarySelection.core")) {
 		set_bool(content, &rc.primary_selection);
 	} else if (!strcasecmp(nodename, "windowAnimations.core")) {
@@ -1594,6 +1596,7 @@ rcxml_init(void)
 	rc.reuse_output_mode = false;
 	rc.allowed_interfaces = UINT32_MAX;
 	rc.xwayland_persistence = false;
+	rc.xwayland_native_scaling = false;
 	rc.primary_selection = true;
 	rc.window_animations = false;
 

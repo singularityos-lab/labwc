@@ -185,6 +185,7 @@ struct server {
 	struct wl_event_source *sigchld_source;
 
 	struct wlr_xdg_shell *xdg_shell;
+	struct wlr_xdg_output_manager_v1 *xdg_output_manager;
 	struct wlr_layer_shell_v1 *layer_shell;
 
 	struct wl_listener new_xdg_toplevel;

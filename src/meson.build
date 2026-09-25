@@ -40,6 +40,7 @@ labwc_sources = files(
 if have_xwayland
   labwc_sources += files(
     'xwayland.c',
+    'xwayland-scale.c',
     'xwayland-unmanaged.c',
   )
 endif

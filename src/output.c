@@ -749,8 +749,8 @@ output_init(void)
 	}
 
 	/* Enable screen recording with wf-recorder */
-	wlr_xdg_output_manager_v1_create(server.wl_display,
-		server.output_layout);
+	server.xdg_output_manager = wlr_xdg_output_manager_v1_create(
+		server.wl_display, server.output_layout);
 
 	wl_list_init(&server.outputs);
 	server.next_output_id_bit = (1 << 0);

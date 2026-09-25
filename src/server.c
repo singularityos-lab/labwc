@@ -154,6 +154,9 @@ reload_config_and_theme(void)
 	resize_indicator_reconfigure();
 	kde_server_decoration_update_default();
 	workspaces_reconfigure();
+#if HAVE_XWAYLAND
+	xwayland_update_scale();
+#endif
 }
 
 static int
@@ -332,6 +335,9 @@ server_global_filter(const struct wl_client *client, const struct wl_global *glo
 	 */
 	if (client != xwayland_client && !strcmp(iface->name, "xwayland_shell_v1")) {
 		/* Filter out the xwayland shell for usual clients */
+		return false;
+	}
+	if (!xwayland_scale_filter_global(client, global)) {
 		return false;
 	}
 #endif

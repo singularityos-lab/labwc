@@ -21,6 +21,7 @@ server_protocols = [
 	'singularity-tiling-unstable-v1.xml',
 	'singularity-gesture-unstable-v1.xml',
 	'singularity-blur-unstable-v1.xml',
+	wl_protocol_dir / 'unstable/xdg-output/xdg-output-unstable-v1.xml',
 ]
 
 server_protos_src = []

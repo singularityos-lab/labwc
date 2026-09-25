@@ -33,7 +33,8 @@ handle_request_configure(struct wl_listener *listener, void *data)
 	struct wlr_xwayland_surface_configure_event *ev = data;
 	wlr_xwayland_surface_configure(xsurface, ev->x, ev->y, ev->width, ev->height);
 	if (unmanaged->node) {
-		wlr_scene_node_set_position(unmanaged->node, ev->x, ev->y);
+		wlr_scene_node_set_position(unmanaged->node,
+			xwayland_from_x(ev->x), xwayland_from_x(ev->y));
 		cursor_update_focus();
 	}
 }
@@ -45,7 +46,8 @@ handle_set_geometry(struct wl_listener *listener, void *data)
 		wl_container_of(listener, unmanaged, set_geometry);
 	struct wlr_xwayland_surface *xsurface = unmanaged->xwayland_surface;
 	if (unmanaged->node) {
-		wlr_scene_node_set_position(unmanaged->node, xsurface->x, xsurface->y);
+		wlr_scene_node_set_position(unmanaged->node,
+			xwayland_from_x(xsurface->x), xwayland_from_x(xsurface->y));
 		cursor_update_focus();
 	}
 }
@@ -72,8 +74,10 @@ handle_map(struct wl_listener *listener, void *data)
 		server.unmanaged_tree, xsurface->surface);
 	die_if_null(scene_surface);
 	unmanaged->node = &scene_surface->buffer->node;
+	xwayland_scale_attach(scene_surface->buffer);
 
-	wlr_scene_node_set_position(unmanaged->node, xsurface->x, xsurface->y);
+	wlr_scene_node_set_position(unmanaged->node,
+		xwayland_from_x(xsurface->x), xwayland_from_x(xsurface->y));
 	cursor_update_focus();
 }
 

@@ -9,6 +9,10 @@
 struct wlr_compositor;
 struct wlr_output;
 struct wlr_output_layout;
+struct wlr_scene_buffer;
+struct wlr_scene_tree;
+struct wl_client;
+struct wl_global;
 
 struct xwayland_unmanaged {
 	struct wlr_xwayland_surface *xwayland_surface;
@@ -40,6 +44,7 @@ struct xwayland_view {
 	struct wlr_xwayland_surface *xwayland_surface;
 	bool focused_before_map;
 	bool initial_geometry_set;
+	struct wlr_box requested;
 
 	/* Events unique to XWayland views */
 	struct wl_listener associate;
@@ -82,5 +87,29 @@ void xwayland_update_workarea(void);
 
 void xwayland_flush(void);
 
+double xwayland_scale(void);
+int xwayland_to_x(int value);
+int xwayland_from_x(int value);
+void xwayland_scale_attach(struct wlr_scene_buffer *buffer);
+void xwayland_scale_attach_tree(struct wlr_scene_tree *tree);
+bool xwayland_scale_filter_global(const struct wl_client *client,
+	const struct wl_global *global);
+void xwayland_update_scale(void);
+void xwayland_scale_xwm_ready(void);
+void xwayland_scale_init(void);
+void xwayland_scale_finish(void);
+
 #endif /* HAVE_XWAYLAND */
+
+struct wlr_surface;
+
+#if HAVE_XWAYLAND
+double xwayland_surface_scale(struct wlr_surface *surface);
+#else
+static inline double
+xwayland_surface_scale(struct wlr_surface *surface)
+{
+	return 1.0;
+}
+#endif
 #endif /* LABWC_XWAYLAND_H */

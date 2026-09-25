@@ -598,8 +598,9 @@ cursor_update_common(const struct cursor_context *ctx,
 			int lx, ly;
 			wlr_scene_node_coords(seat->pressed.ctx.node, &lx, &ly);
 			*notified_ctx = seat->pressed.ctx;
-			notified_ctx->sx = server.seat.cursor->x - lx;
-			notified_ctx->sy = server.seat.cursor->y - ly;
+			double scale = xwayland_surface_scale(notified_ctx->surface);
+			notified_ctx->sx = (server.seat.cursor->x - lx) * scale;
+			notified_ctx->sy = (server.seat.cursor->y - ly) * scale;
 		}
 		return;
 	}
@@ -776,9 +777,10 @@ warp_cursor_to_constraint_hint(struct seat *seat,
 			& WLR_POINTER_CONSTRAINT_V1_STATE_CURSOR_HINT) {
 		double sx = constraint->current.cursor_hint.x;
 		double sy = constraint->current.cursor_hint.y;
+		double scale = xwayland_surface_scale(constraint->surface);
 		wlr_cursor_warp(seat->cursor, NULL,
-			server.active_view->current.x + sx,
-			server.active_view->current.y + sy);
+			server.active_view->current.x + sx / scale,
+			server.active_view->current.y + sy / scale);
 
 		/* Make sure we are not sending unnecessary surface movements */
 		wlr_seat_pointer_warp(seat->wlr_seat, sx, sy);
@@ -884,14 +886,18 @@ apply_constraint(struct seat *seat, struct wlr_pointer *pointer, double *x, doub
 	sx -= server.active_view->current.x;
 	sy -= server.active_view->current.y;
 
+	double scale = xwayland_surface_scale(seat->current_constraint->surface);
+	sx *= scale;
+	sy *= scale;
+
 	double sx_confined, sy_confined;
 	if (!wlr_region_confine(&seat->current_constraint->region, sx, sy,
-			sx + *x, sy + *y, &sx_confined, &sy_confined)) {
+			sx + *x * scale, sy + *y * scale, &sx_confined, &sy_confined)) {
 		return;
 	}
 
-	*x = sx_confined - sx;
-	*y = sy_confined - sy;
+	*x = (sx_confined - sx) / scale;
+	*y = (sy_confined - sy) / scale;
 }
 
 static bool

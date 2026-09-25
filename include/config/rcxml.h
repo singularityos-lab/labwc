@@ -85,6 +85,7 @@ struct rcxml {
 	bool reuse_output_mode;
 	uint32_t allowed_interfaces;
 	bool xwayland_persistence;
+	bool xwayland_native_scaling;
 	bool primary_selection;
 	bool window_animations;
 	char *prompt_command;

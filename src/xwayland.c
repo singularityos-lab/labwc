@@ -96,12 +96,14 @@ xwayland_view_get_size_hints(struct view *view)
 		return (struct view_size_hints){0};
 	}
 	return (struct view_size_hints){
-		.min_width = hints->min_width,
-		.min_height = hints->min_height,
-		.width_inc = hints->width_inc,
-		.height_inc = hints->height_inc,
-		.base_width = hints->base_width,
-		.base_height = hints->base_height,
+		.min_width = xwayland_from_x(hints->min_width),
+		.min_height = xwayland_from_x(hints->min_height),
+		.width_inc = hints->width_inc
+			? MAX(1, xwayland_from_x(hints->width_inc)) : 0,
+		.height_inc = hints->height_inc
+			? MAX(1, xwayland_from_x(hints->height_inc)) : 0,
+		.base_width = xwayland_from_x(hints->base_width),
+		.base_height = xwayland_from_x(hints->base_height),
 	};
 }
 
@@ -251,10 +253,10 @@ ensure_initial_geometry_and_output(struct view *view)
 	 */
 	struct wlr_xwayland_surface *xsurface = xwayland_surface_from_view(view);
 	if (wlr_box_empty(&view->pending)) {
-		view->pending.x = xsurface->x;
-		view->pending.y = xsurface->y;
-		view->pending.width = xsurface->width;
-		view->pending.height = xsurface->height;
+		view->pending.x = xwayland_from_x(xsurface->x);
+		view->pending.y = xwayland_from_x(xsurface->y);
+		view->pending.width = xwayland_from_x(xsurface->width);
+		view->pending.height = xwayland_from_x(xsurface->height);
 	}
 
 	/*
@@ -301,8 +303,10 @@ handle_commit(struct wl_listener *listener, void *data)
 	 * the position and the size of the view at the same time,
 	 * reducing visual glitches.
 	 */
-	if (current->width != state->width || current->height != state->height) {
-		view_impl_apply_geometry(view, state->width, state->height);
+	int width = xwayland_from_x(state->width);
+	int height = xwayland_from_x(state->height);
+	if (current->width != width || current->height != height) {
+		view_impl_apply_geometry(view, width, height);
 		view_moved(view);
 	}
 }
@@ -443,12 +447,29 @@ handle_destroy(struct wl_listener *listener, void *data)
 	view_destroy(view);
 }
 
+static int
+to_x_preferring(int value, int requested, int current)
+{
+	if (xwayland_from_x(requested) == value) {
+		return requested;
+	}
+	if (xwayland_from_x(current) == value) {
+		return current;
+	}
+	return xwayland_to_x(value);
+}
+
 static void
 xwayland_view_configure(struct view *view, struct wlr_box geo)
 {
+	struct wlr_box *requested = &xwayland_view_from_view(view)->requested;
+	struct wlr_xwayland_surface *xsurface = xwayland_surface_from_view(view);
 	view->pending = geo;
-	wlr_xwayland_surface_configure(xwayland_surface_from_view(view),
-		geo.x, geo.y, geo.width, geo.height);
+	wlr_xwayland_surface_configure(xsurface,
+		to_x_preferring(geo.x, requested->x, xsurface->x),
+		to_x_preferring(geo.y, requested->y, xsurface->y),
+		to_x_preferring(geo.width, requested->width, xsurface->width),
+		to_x_preferring(geo.height, requested->height, xsurface->height));
 
 	/*
 	 * For unknown reasons, XWayland surfaces that are completely
@@ -480,10 +501,21 @@ handle_request_configure(struct wl_listener *listener, void *data)
 	bool ignore_configure_requests = window_rules_get_property(
 		view, "ignoreConfigureRequest") == LAB_PROP_TRUE;
 
+	xwayland_view->requested = (struct wlr_box){
+		.x = event->x,
+		.y = event->y,
+		.width = event->width,
+		.height = event->height,
+	};
+
 	if (view_is_floating(view) && !ignore_configure_requests) {
 		/* Honor client configure requests for floating views */
-		struct wlr_box box = {.x = event->x, .y = event->y,
-			.width = event->width, .height = event->height};
+		struct wlr_box box = {
+			.x = xwayland_from_x(event->x),
+			.y = xwayland_from_x(event->y),
+			.width = xwayland_from_x(event->width),
+			.height = xwayland_from_x(event->height),
+		};
 		view_adjust_size(view, &box.width, &box.height);
 		xwayland_view_configure(view, box);
 	} else {
@@ -785,6 +817,7 @@ handle_map(struct wl_listener *listener, void *data)
 		view->content_tree = wlr_scene_subsurface_tree_create(
 			view->scene_tree, view->surface);
 		die_if_null(view->content_tree);
+		xwayland_scale_attach_tree(view->content_tree);
 	}
 
 	wlr_scene_node_set_enabled(&view->content_tree->node, !view->shaded);
@@ -1086,11 +1119,13 @@ handle_xwm_ready(struct wl_listener *listener, void *data)
 {
 	wlr_xwayland_set_seat(server.xwayland, server.seat.wlr_seat);
 	xwayland_update_workarea();
+	xwayland_scale_xwm_ready();
 }
 
 void
 xwayland_server_init(struct wlr_compositor *compositor)
 {
+	xwayland_scale_init();
 	server.xwayland =
 		wlr_xwayland_create(server.wl_display,
 			compositor, /* lazy */ !rc.xwayland_persistence);
@@ -1143,6 +1178,7 @@ xwayland_server_finish(void)
 	wl_list_remove(&server.xwayland_new_surface.link);
 	wl_list_remove(&server.xwayland_server_ready.link);
 	wl_list_remove(&server.xwayland_xwm_ready.link);
+	xwayland_scale_finish();
 
 	/*
 	 * Reset server.xwayland to NULL first to prevent callbacks (like
@@ -1199,10 +1235,10 @@ xwayland_adjust_usable_area(struct view *view, struct wlr_output_layout *layout,
 	 * of the X11 screen, which should generally correspond with the
 	 * lower right corner of the output layout
 	 */
-	double strut_left = strut->left;
-	double strut_right = (lb.x + lb.width) - strut->right;
-	double strut_top = strut->top;
-	double strut_bottom = (lb.y + lb.height) - strut->bottom;
+	double strut_left = xwayland_from_x(strut->left);
+	double strut_right = (lb.x + lb.width) - xwayland_from_x(strut->right);
+	double strut_top = xwayland_from_x(strut->top);
+	double strut_bottom = (lb.y + lb.height) - xwayland_from_x(strut->bottom);
 
 	/* convert layout to output coordinates */
 	wlr_output_layout_output_coords(layout, output,
@@ -1217,22 +1253,22 @@ xwayland_adjust_usable_area(struct view *view, struct wlr_output_layout *layout,
 	/* here we mix output and layout coordinates; be careful */
 	if (strut_left > usable->x && strut_left < usable_right
 			&& intervals_overlap(ob.y, ob.y + ob.height,
-			strut->left_start_y, strut->left_end_y + 1)) {
+			xwayland_from_x(strut->left_start_y), xwayland_from_x(strut->left_end_y) + 1)) {
 		usable->x = strut_left;
 	}
 	if (strut_right > usable->x && strut_right < usable_right
 			&& intervals_overlap(ob.y, ob.y + ob.height,
-			strut->right_start_y, strut->right_end_y + 1)) {
+			xwayland_from_x(strut->right_start_y), xwayland_from_x(strut->right_end_y) + 1)) {
 		usable_right = strut_right;
 	}
 	if (strut_top > usable->y && strut_top < usable_bottom
 			&& intervals_overlap(ob.x, ob.x + ob.width,
-			strut->top_start_x, strut->top_end_x + 1)) {
+			xwayland_from_x(strut->top_start_x), xwayland_from_x(strut->top_end_x) + 1)) {
 		usable->y = strut_top;
 	}
 	if (strut_bottom > usable->y && strut_bottom < usable_bottom
 			&& intervals_overlap(ob.x, ob.x + ob.width,
-			strut->bottom_start_x, strut->bottom_end_x + 1)) {
+			xwayland_from_x(strut->bottom_start_x), xwayland_from_x(strut->bottom_end_x) + 1)) {
 		usable_bottom = strut_bottom;
 	}
 
@@ -1243,6 +1279,8 @@ xwayland_adjust_usable_area(struct view *view, struct wlr_output_layout *layout,
 void
 xwayland_update_workarea(void)
 {
+	xwayland_update_scale();
+
 	/*
 	 * Do nothing if called during destroy or before xwayland is ready.
 	 * This function will be called again from the ready signal handler.
@@ -1311,10 +1349,10 @@ xwayland_update_workarea(void)
 	 * to XWayland, so we set only one workarea.
 	 */
 	struct wlr_box workarea = {
-		.x = workarea_left,
-		.y = workarea_top,
-		.width = workarea_right - workarea_left,
-		.height = workarea_bottom - workarea_top,
+		.x = xwayland_to_x(workarea_left),
+		.y = xwayland_to_x(workarea_top),
+		.width = xwayland_to_x(workarea_right - workarea_left),
+		.height = xwayland_to_x(workarea_bottom - workarea_top),
 	};
 	wlr_xwayland_set_workareas(server.xwayland, &workarea, 1);
 }
