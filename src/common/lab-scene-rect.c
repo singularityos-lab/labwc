@@ -2,7 +2,7 @@
 #include "common/lab-scene-rect.h"
 #include <assert.h>
 #include <string.h>
-#include <wlr/types/wlr_scene.h>
+#include <scenefx/types/wlr_scene.h>
 #include "common/mem.h"
 #include "common/scene-helpers.h"
 
