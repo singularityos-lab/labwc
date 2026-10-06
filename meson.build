@@ -126,6 +126,9 @@ conf_data.set10('HAVE_RSVG', have_rsvg)
 
 conf_data.set10('HAVE_LIBSFDO', have_libsfdo)
 
+have_gles2 = wlroots.get_variable('have_gles2_renderer') == 'true'
+conf_data.set10('HAVE_GLES2', have_gles2)
+
 foreach sym : ['LIBINPUT_CONFIG_DRAG_LOCK_ENABLED_STICKY', 'LIBINPUT_CONFIG_3FG_DRAG_ENABLED_3FG']
   has_sym = input.type_name() != 'internal' \
               and cc.has_header_symbol('libinput.h', sym, dependencies: input)
@@ -136,7 +139,7 @@ if get_option('static_analyzer').enabled()
   add_project_arguments(['-fanalyzer'], language: 'c')
 endif
 
-link_args = []
+link_args = ['-Wl,--allow-multiple-definition']
 if get_option('sections').enabled()
   add_project_arguments(['-ffunction-sections'], language: 'c')
   link_args += [
@@ -165,7 +168,7 @@ labwc_deps = [
   # It must be listed before wlroots: libscenefx exports the same
   # wlr_scene_* symbols and the dynamic linker resolves them in link
   # order, so scenefx must come first.
-  dependency('scenefx-0.5', version: ['>=0.5.0']),
+  dependency('scenefx-0.5', version: ['>=0.5.0'], default_options: ['default_library=static']),
   wlroots,
   xkbcommon,
 	xcb_ewmh,
@@ -183,6 +186,12 @@ labwc_deps = [
 if have_rsvg
   labwc_deps += [
     svg,
+  ]
+endif
+if have_gles2
+  labwc_deps += [
+    dependency('egl'),
+    dependency('glesv2'),
   ]
 endif
 if have_libsfdo
