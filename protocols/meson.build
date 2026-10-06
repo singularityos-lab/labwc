@@ -21,6 +21,11 @@ server_protocols = [
 	'singularity-tiling-unstable-v1.xml',
 	'singularity-gesture-unstable-v1.xml',
 	'singularity-blur-unstable-v1.xml',
+	'singularity-key-hold-unstable-v1.xml',
+	'singularity-motion-unstable-v1.xml',
+	'singularity-snap-unstable-v1.xml',
+	'singularity-stage-unstable-v1.xml',
+	'singularity-process-unstable-v1.xml',
 	wl_protocol_dir / 'unstable/xdg-output/xdg-output-unstable-v1.xml',
 	'ext-background-effect-v1.xml',
 ]
