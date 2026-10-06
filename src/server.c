@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #define _POSIX_C_SOURCE 200809L
 #include "config.h"
+#include <assert.h>
 #include <signal.h>
 #include <string.h>
 #include <sys/wait.h>
@@ -53,6 +54,7 @@
 #include "action.h"
 #include "common/macros.h"
 #include "common/mem.h"
+#include "common/nag.h"
 #include "common/scene-helpers.h"
 #include "config/rcxml.h"
 #include "config/session.h"
@@ -90,36 +92,6 @@ void singularity_blur_init(void);
 #define LAB_WLR_PRESENTATION_TIME_VERSION 2
 
 static void
-handle_foreign_toplevel_image_capture_source_request(
-		struct wl_listener *listener, void *data)
-{
-	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request
-		*request = data;
-	struct wlr_ext_image_capture_source_v1 *source = NULL;
-	struct view *view;
-
-	wl_list_for_each(view, &server.views, link) {
-		if (!view->mapped || !view->scene_tree || !view->foreign_toplevel) {
-			continue;
-		}
-		if (foreign_toplevel_get_ext_handle(view->foreign_toplevel)
-				!= request->toplevel_handle) {
-			continue;
-		}
-
-		source = wlr_ext_image_capture_source_v1_create_with_scene_node(
-			&view->scene_tree->node, server.wl_event_loop,
-			server.allocator, server.renderer);
-		break;
-	}
-
-	if (!wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(
-			request, source)) {
-		wlr_log(WLR_ERROR, "failed to accept toplevel image capture request");
-	}
-}
-
-static void
 reload_config_and_theme(void)
 {
 	/* Avoid UAF when dialog client is used during reconfigure */
@@ -133,6 +105,7 @@ reload_config_and_theme(void)
 
 	scaled_buffer_invalidate_sharing();
 	rcxml_finish();
+	nag_reset();
 	rcxml_read(rc.config_file);
 	theme_finish(rc.theme);
 	theme_init(rc.theme, rc.theme_name);
@@ -157,6 +130,8 @@ reload_config_and_theme(void)
 #if HAVE_XWAYLAND
 	xwayland_update_scale();
 #endif
+
+	wl_event_loop_add_idle(server.wl_event_loop, nag_show_callback, NULL);
 }
 
 static int
@@ -184,62 +159,90 @@ handle_sigchld(int signal, void *data)
 	siginfo_t info;
 	info.si_pid = 0;
 
-	/* First call waitid() with NOWAIT which doesn't consume the zombie */
-	if (waitid(P_ALL, /*id*/ 0, &info, WEXITED | WNOHANG | WNOWAIT) == -1) {
-		return 0;
-	}
+	/*
+	 * We may get a single SIGCHILD event although there are
+	 * multiple childs terminating so we loop through them.
+	 *
+	 * A 'while true; labwc --reconfigure; done' loop along
+	 * with some config error which causes labnag to re-spawn
+	 * constantly is a good test for this handler.
+	 */
 
-	if (info.si_pid == 0) {
-		/* No children in waitable state */
-		return 0;
-	}
-
-#if HAVE_XWAYLAND
-	/* Ensure that we do not break xwayland lazy initialization */
-	if (server.xwayland && server.xwayland->server
-			&& info.si_pid == server.xwayland->server->pid) {
-		return 0;
-	}
-#endif
-
-	/* And then do the actual (consuming) lookup again */
-	int ret = waitid(P_PID, info.si_pid, &info, WEXITED);
-	if (ret == -1) {
-		wlr_log(WLR_ERROR, "blocking waitid() for %ld failed: %d",
-			(long)info.si_pid, ret);
-		return 0;
-	}
-
-	const char *signame;
-	switch (info.si_code) {
-	case CLD_EXITED:
-		if (!action_check_prompt_result(info.si_pid, info.si_status)) {
-			wlr_log(info.si_status == 0 ? WLR_DEBUG : WLR_ERROR,
-				"spawned child %ld exited with %d",
-				(long)info.si_pid, info.si_status);
+	/* First call waitid() with NOWAIT which doesn't consume the zombie. */
+	while (waitid(P_ALL, /*id*/ 0, &info, WEXITED | WNOHANG | WNOWAIT) != -1) {
+		if (info.si_pid == 0) {
+			/* No children in waitable state */
+			return 0;
 		}
-		break;
-	case CLD_KILLED:
-	case CLD_DUMPED:
-		signame = strsignal(info.si_status);
-		wlr_log(WLR_ERROR,
-			"spawned child %ld terminated with signal %d (%s)",
-				(long)info.si_pid, info.si_status,
-				signame ? signame : "unknown");
-		/* Allow cleanup of killed prompt */
-		action_check_prompt_result(info.si_pid, -info.si_status);
-		break;
-	default:
-		wlr_log(WLR_ERROR,
-			"spawned child %ld terminated unexpectedly: %d"
-			" please report", (long)info.si_pid, info.si_code);
-	}
 
-	if (info.si_pid == server.primary_client_pid) {
-		wlr_log(WLR_INFO, "primary client %ld exited", (long)info.si_pid);
-		wl_display_terminate(server.wl_display);
-	}
+	#if HAVE_XWAYLAND
+		/* Ensure that we do not break xwayland lazy initialization */
+		if (server.xwayland && server.xwayland->server
+				&& info.si_pid == server.xwayland->server->pid) {
+			/*
+			 * We need to completely return here to prevent running
+			 * into an endless loop without giving the wlroots internal
+			 * xwayland startup handler a chance to use its own waitid().
+			 *
+			 * Further queued up child process terminatations will be
+			 * dealt with on the next SIGCHLD handler invocation and
+			 * float around as zombies until that point.
+			 */
+			return 0;
+		}
+	#endif
 
+		/* And then do the actual (consuming) lookup again */
+		int ret = waitid(P_PID, info.si_pid, &info, WEXITED);
+		if (ret == -1) {
+			wlr_log(WLR_ERROR, "blocking waitid() for %ld failed: %d",
+				(long)info.si_pid, ret);
+			goto check_next;
+		}
+
+		const char *signame;
+		switch (info.si_code) {
+		case CLD_EXITED:
+			if (!action_check_prompt_result(info.si_pid, info.si_status)
+					&& !nag_check_pid(info.si_pid)) {
+				wlr_log(info.si_status == 0 ? WLR_DEBUG : WLR_ERROR,
+					"spawned child %ld exited with %d",
+					(long)info.si_pid, info.si_status);
+			}
+			break;
+		case CLD_KILLED:
+		case CLD_DUMPED:
+			signame = strsignal(info.si_status);
+			wlr_log(WLR_ERROR,
+				"spawned child %ld terminated with signal %d (%s)",
+					(long)info.si_pid, info.si_status,
+					signame ? signame : "unknown");
+			/* Allow cleanup of killed prompt */
+			action_check_prompt_result(info.si_pid, -info.si_status);
+			nag_check_pid(info.si_pid);
+			break;
+		default:
+			wlr_log(WLR_ERROR,
+				"spawned child %ld terminated unexpectedly: %d"
+				" please report", (long)info.si_pid, info.si_code);
+		}
+
+		if (info.si_pid == server.primary_client_pid) {
+			wlr_log(WLR_INFO, "primary client %ld exited", (long)info.si_pid);
+			wl_display_terminate(server.wl_display);
+		}
+check_next:
+		/*
+		 * We need each initial WNOHANG | WNOWAIT call to clearly identify
+		 * if there are no more children to wait for so we reset si_pid
+		 * as recommended for portability in the waitid man page.
+		 *
+		 * Note that at least on one of the devs linux system the call
+		 * actually returns with -1 in that case, contrary to what is
+		 * written in the man page. We do handle both cases.
+		 */
+		info.si_pid = 0;
+	}
 	return 0;
 }
 
@@ -450,6 +453,39 @@ handle_renderer_lost(struct wl_listener *listener, void *data)
 
 	wlr_allocator_destroy(old_allocator);
 	wlr_renderer_destroy(old_renderer);
+}
+
+static void
+handle_toplevel_capture_source_destroy(struct wl_listener *listener, void *data)
+{
+	struct view *view = wl_container_of(listener, view, capture.on_capture_source_destroy);
+	assert(view->capture.source);
+	view->capture.source = NULL;
+	wl_list_remove(&listener->link);
+	wl_list_init(&listener->link);
+}
+
+static void
+handle_toplevel_capture_request(struct wl_listener *listener, void *data)
+{
+	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request *request = data;
+	struct view *view = request->toplevel_handle->data;
+	assert(view);
+	wlr_log(WLR_INFO, "Capturing toplevel %s", view->app_id);
+
+	if (!view->capture.source) {
+		view->capture.source = wlr_ext_image_capture_source_v1_create_with_scene_node(
+			&view->capture.scene->tree.node, server.wl_event_loop,
+			server.allocator, server.renderer);
+		assert(view->capture.source);
+
+		view->capture.on_capture_source_destroy.notify =
+			handle_toplevel_capture_source_destroy;
+		wl_signal_add(&view->capture.source->events.destroy,
+			&view->capture.on_capture_source_destroy);
+	}
+	wlr_ext_foreign_toplevel_image_capture_source_manager_v1_request_accept(
+		request, view->capture.source);
 }
 
 void
@@ -732,16 +768,19 @@ server_init(void)
 	wlr_screencopy_manager_v1_create(server.wl_display);
 	wlr_ext_image_copy_capture_manager_v1_create(server.wl_display, 1);
 	wlr_ext_output_image_capture_source_manager_v1_create(server.wl_display, 1);
-	server.foreign_toplevel_image_capture_source_manager =
+
+	server.toplevel_capture.manager =
 		wlr_ext_foreign_toplevel_image_capture_source_manager_v1_create(
 			server.wl_display, 1);
-	if (server.foreign_toplevel_image_capture_source_manager) {
-		server.foreign_toplevel_image_capture_source_request.notify =
-			handle_foreign_toplevel_image_capture_source_request;
-		wl_signal_add(&server.foreign_toplevel_image_capture_source_manager
-				->events.new_request,
-			&server.foreign_toplevel_image_capture_source_request);
+	if (server.toplevel_capture.manager) {
+		server.toplevel_capture.on.new_request.notify = handle_toplevel_capture_request;
+		wl_signal_add(&server.toplevel_capture.manager->events.new_request,
+			&server.toplevel_capture.on.new_request);
+	} else {
+		/* Allow safe removal on shutdown */
+		wl_list_init(&server.toplevel_capture.on.new_request.link);
 	}
+
 	wlr_data_control_manager_v1_create(server.wl_display);
 	wlr_ext_data_control_manager_v1_create(server.wl_display,
 		LAB_EXT_DATA_CONTROL_VERSION);
@@ -820,6 +859,7 @@ server_init(void)
 #if HAVE_XWAYLAND
 	xwayland_server_init(server.compositor);
 #endif
+	wl_event_loop_add_idle(server.wl_event_loop, nag_show_callback, NULL);
 }
 
 void
@@ -867,6 +907,7 @@ server_finish(void)
 
 	wl_display_destroy_clients(server.wl_display);
 
+	nag_finish();
 	seat_finish();
 	output_finish();
 	xdg_shell_finish();
@@ -880,10 +921,8 @@ server_finish(void)
 		wl_list_remove(&server.drm_lease_request.link);
 		server.drm_lease_request.notify = NULL;
 	}
-	if (server.foreign_toplevel_image_capture_source_request.notify) {
-		wl_list_remove(&server.foreign_toplevel_image_capture_source_request.link);
-		server.foreign_toplevel_image_capture_source_request.notify = NULL;
-	}
+
+	wl_list_remove(&server.toplevel_capture.on.new_request.link);
 
 	wlr_backend_destroy(server.backend);
 	wlr_allocator_destroy(server.allocator);

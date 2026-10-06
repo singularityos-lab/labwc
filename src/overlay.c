@@ -133,8 +133,16 @@ show_overlay(struct seat *seat, struct theme_snapping_overlay *overlay_theme,
 		opts.border_width = overlay_theme->border_width;
 	}
 
+	/*
+	 * By default the overlay is drawn below the dragged window.
+	 * With <snapping><overlay><placement>above</placement> it is
+	 * drawn above instead.
+	 */
+	struct wlr_scene_tree *parent = rc.snap_overlay_on_top
+		? server.cycle_preview_tree : view->scene_tree->node.parent;
+
 	seat->overlay.rect =
-		lab_scene_rect_create(view->scene_tree->node.parent, &opts);
+		lab_scene_rect_create(parent, &opts);
 	seat->overlay.rect_destroy.notify = handle_rect_destroy;
 	wl_signal_add(&seat->overlay.rect->tree->node.events.destroy,
 		&seat->overlay.rect_destroy);
@@ -143,7 +151,11 @@ show_overlay(struct seat *seat, struct theme_snapping_overlay *overlay_theme,
 	start_animation(seat);
 
 	struct wlr_scene_node *node = &seat->overlay.rect->tree->node;
-	wlr_scene_node_place_below(node, &view->scene_tree->node);
+	if (rc.snap_overlay_on_top) {
+		wlr_scene_node_raise_to_top(node);
+	} else {
+		wlr_scene_node_place_below(node, &view->scene_tree->node);
+	}
 	wlr_scene_node_set_position(node, box->x, box->y);
 }
 

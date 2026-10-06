@@ -207,6 +207,13 @@ struct server {
 	struct wlr_xdg_toplevel_icon_manager_v1 *xdg_toplevel_icon_manager;
 	struct wl_listener xdg_toplevel_icon_set_icon;
 
+	struct {
+		struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1 *manager;
+		struct {
+			struct wl_listener new_request;
+		} on;
+	} toplevel_capture;
+
 	/* front to back order */
 	struct wl_list views;
 	uint64_t next_view_creation_id;
@@ -300,9 +307,6 @@ struct server {
 
 	struct wlr_foreign_toplevel_manager_v1 *foreign_toplevel_manager;
 	struct wlr_ext_foreign_toplevel_list_v1 *foreign_toplevel_list;
-	struct wlr_ext_foreign_toplevel_image_capture_source_manager_v1
-		*foreign_toplevel_image_capture_source_manager;
-	struct wl_listener foreign_toplevel_image_capture_source_request;
 
 	struct wlr_drm_lease_v1_manager *drm_lease_manager;
 	struct wl_listener drm_lease_request;
@@ -332,6 +336,8 @@ struct server {
 	struct sfdo *sfdo;
 
 	pid_t primary_client_pid;
+
+	char *title_fmt;
 };
 
 /* defined in main.c */

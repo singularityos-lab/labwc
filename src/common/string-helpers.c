@@ -28,7 +28,7 @@ rtrim(char *s)
 		return;
 	}
 	char *end = s + len - 1;
-	while (end >= s && isspace(*end)) {
+	while (end >= s && isspace((unsigned char)*end)) {
 		end--;
 	}
 	*(end + 1) = '\0';
@@ -37,7 +37,7 @@ rtrim(char *s)
 char *
 string_strip(char *s)
 {
-	while (isspace(*s)) {
+	while (isspace((unsigned char)*s)) {
 		s++;
 	}
 	rtrim(s);
@@ -57,6 +57,8 @@ string_truncate_at_pattern(char *buf, const char *pattern)
 char *
 strdup_printf(const char *fmt, ...)
 {
+	assert(fmt);
+
 	size_t size = 0;
 	char *p = NULL;
 	va_list ap;
@@ -84,7 +86,7 @@ strdup_printf(const char *fmt, ...)
 }
 
 char *
-str_join(const char *const parts[], const char *fmt, const char *sep)
+str_join(const char * const parts[], const char *fmt, const char *sep)
 {
 	assert(parts);
 
@@ -102,7 +104,7 @@ str_join(const char *const parts[], const char *fmt, const char *sep)
 	size_t sep_len = strlen(sep);
 
 	/* Count the length of each formatted string */
-	for (const char *const *s = parts; *s; ++s) {
+	for (const char * const *s = parts; *s; ++s) {
 		int n = snprintf(NULL, 0, fmt, *s);
 		if (n < 0) {
 			return NULL;
@@ -121,7 +123,7 @@ str_join(const char *const parts[], const char *fmt, const char *sep)
 	/* Concatenate the strings and separators */
 	char *buf = xzalloc(size);
 	char *p = buf;
-	for (const char *const *s = parts; *s; ++s) {
+	for (const char * const *s = parts; *s; ++s) {
 		int n = 0;
 
 		if (p != buf) {
@@ -152,7 +154,7 @@ str_join(const char *const parts[], const char *fmt, const char *sep)
 }
 
 static bool
-_str_endswith(const char *const string, const char *const suffix, uint32_t flags)
+_str_endswith(const char * const string, const char * const suffix, uint32_t flags)
 {
 	size_t len_str = string ? strlen(string) : 0;
 	size_t len_sfx = suffix ? strlen(suffix) : 0;
@@ -173,13 +175,13 @@ _str_endswith(const char *const string, const char *const suffix, uint32_t flags
 }
 
 bool
-str_endswith(const char *const string, const char *const suffix)
+str_endswith(const char * const string, const char * const suffix)
 {
 	return _str_endswith(string, suffix, STR_FLAG_NONE);
 }
 
 bool
-str_endswith_ignore_case(const char *const string, const char *const suffix)
+str_endswith_ignore_case(const char * const string, const char * const suffix)
 {
 	return _str_endswith(string, suffix, STR_FLAG_IGNORE_CASE);
 }
@@ -200,7 +202,7 @@ bool
 str_space_only(const char *s)
 {
 	for (; *s; s++) {
-		if (!isspace(*s)) {
+		if (!isspace((unsigned char)*s)) {
 			return false;
 		}
 	}

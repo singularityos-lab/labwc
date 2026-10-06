@@ -25,7 +25,7 @@ The XDG Base Directory Specification does not specify whether or not programs
 should (a) allow the first-identified configuration file to supersede any
 others, or (b) define rules for merging the information from more than one file.
 
-By default, labwc uses option (a), reading only the first file identified.  With
+By default, labwc uses option (a), reading only the first file identified. With
 the --merge-config option, the search order is reversed, but every configuration
 file encountered is processed in turn. Thus, user-specific files will augment
 system-wide configurations, with conflicts favoring the user-specific
@@ -181,6 +181,7 @@ this is for compatibility with Openbox.
   <windowAnimations>no</windowAnimations>
   <primarySelection>yes</primarySelection>
   <promptCommand>[see details below]</promptCommand>
+  <errorCommand>[see details below]</errorCommand>
 </core>
 ```
 
@@ -315,6 +316,29 @@ this is for compatibility with Openbox.
 		--text="%m" \\
 		--ok-label="%y" \\
 		--cancel-label="%n"
+	```
+
+*<core><errorCommand>*
+	Set command to be invoked for displaying errors in the config files,
+	it is executed when errors are detected on startup and reconfigure.
+	The errors are sent to STDIN of the program, and a SIGTERM is sent to
+	it if the process is still running when a reconfigure is triggered.
+
+	The default error command is:
+	```
+	labnag \\
+		--message 'Config errors detected' \\
+		--button-dismiss 'Close' \\
+		--layer overlay \\
+		--timeout 0 \\
+		--detailed-message
+	```
+
+	Example using `zenity`:
+	```
+	<core>
+	  <errorCommand>zenity --title='Config Error' --text-info</errorCommand>
+	</core>
 	```
 
 ## PLACEMENT
@@ -527,7 +551,12 @@ extending outward from the snapped edge.
 	*<range><inner>* and *<range><outer>*, and 50 for *<cornerRange>*.
 
 *<snapping><overlay><enabled>* [yes|no]
-	Show an overlay when snapping a window to an output edge. Default is yes.
+	Show an overlay when snapping a window to an output edge.
+	Default is yes.
+
+*<snapping><overlay><placement>* [above|below]
+	Place the snap-overlay above the currently dragged window
+	instead of below it. Default is below.
 
 *<snapping><overlay><delay><inner>*++
 *<snapping><overlay><delay><outer>*
@@ -596,7 +625,7 @@ extending outward from the snapped edge.
 	A setting of 0 disables the OSD. Default is 1000 ms.
 
 *<desktops><prefix>*
-	Set the prefix to use when using "number" above. Default is "Workspace"
+	Set the prefix to use when using "number" above. Default is "Workspace".
 
 *<desktops><perOutput>* [yes|no]
 	Give every output its own current workspace. Switching workspaces
@@ -761,7 +790,7 @@ generate gesture events, like swipe and pinch. There are some related settings
 (e.g. *threeFingerDrag* and *twoFingerScroll*) in the *<libinput>* section.
 
 In the Wayland Compositor domain, events associated with touchscreens are
-sometimes simply referred to as *touch* events.  Touchscreens can be configured
+sometimes simply referred to as *touch* events. Touchscreens can be configured
 in both the *<touch>* and *<libinput>* sections. Note that touchscreen gestures
 are not interpreted by libinput, nor labwc. Any touch point is passed to the
 client (application) for any interpretation of gestures.
@@ -836,9 +865,10 @@ overrideInhibition="">*
 	Make this keybind work even if the screen is locked. Default is no.
 
 	*overrideInhibition* [yes|no]
-	Make this keybind work even if the view inhibits keybinds. Default is no.
+	Make this keybind work even if the view inhibits keybinds.
 	This can be used to prevent W-Tab and similar keybinds from being
 	delivered to Virtual Machines, VNC clients or nested compositors.
+	Default is no.
 
 	*onRelease* [yes|no]
 	When yes, fires the keybind action when the key or key
@@ -852,7 +882,7 @@ overrideInhibition="">*
 
 	```
 	<keybind key="Super_L" onRelease="yes">
-	  <action name="Execute" command="rofi -show drun"/>
+	  <action name="Execute" command="rofi -show drun" />
 	</keybind>
 	```
 
@@ -873,6 +903,7 @@ overrideInhibition="">*
   W-Return - lab-sensible-terminal
   A-F4 - close window
   W-a - toggle maximize
+  W-d - toggle show-desktop
   W-<arrow> - resize window to fill half or quarter of the output
   A-Space - show window menu
 ```
@@ -896,7 +927,8 @@ input-devices by the Wayland protocol.
 *<mouse><doubleClickTime>*
 	Set double click time in milliseconds. Default is 500.
 
-*<mouse><context name=""><mousebind button="" direction="" action=""><action>*
+*<mouse><context name=""><mousebind button="" direction="" action=""
+overrideInhibition=""><action>*
 	Multiple *<mousebind>* can exist within one *<context>*; and multiple
 	*<action>* can exist within one *<mousebind>*.
 
@@ -912,7 +944,7 @@ input-devices by the Wayland protocol.
 	- Shade: A button that, by default, toggles window shading.
 	- AllDesktops: A button that, by default, toggles omnipresence of a
 	  window.
-	- Close: A button that, by default, closses a window.
+	- Close: A button that, by default, closes a window.
 	- Border: The window's border including Top...BRCorner below.
 	- Top: The top edge of the window's border.
 	- Bottom: The bottom edge of the window's border.
@@ -986,18 +1018,25 @@ input-devices by the Wayland protocol.
 
 ```
 <mouse>
-  <default/>
+  <default />
   <context name="Frame">
-    <mousebind button="W-Left" action="Press"/>
-    <mousebind button="W-Left" action="Drag"/>
+    <mousebind button="W-Left" action="Press" />
+    <mousebind button="W-Left" action="Drag" />
   </context>
 </mouse>
 ```
 
+	*overrideInhibition* [yes|no]
+		Make this mousebind work even if the view inhibits
+		keybinds/mousebinds with `ToggleKeybinds` action.
+		This can be used to prevent mousebinds from being delivered
+		to Virtual Machines, VNC clients or nested compositors.
+		Default is no.
+
 *<mouse><default />*
 	Load default mousebinds. This is an addition to the openbox
 	specification and provides a way to keep config files simpler whilst
-	allowing user specific binds.  Note that if no rc.xml is found, or if no
+	allowing user specific binds. Note that if no rc.xml is found, or if no
 	<mouse><mousebind> entries exist, the same default mousebinds will be
 	loaded even if the <default /> element is not provided.
 
@@ -1023,7 +1062,7 @@ Note: To rotate touch events with output rotation, use the libinput
 *calibrationMatrix* setting.
 
 ```
-<touch deviceName="" mapToOutput="" mouseEmulation="no"/>
+<touch deviceName="" mapToOutput="" mouseEmulation="no" />
 ```
 
 *<touch deviceName="" />*
@@ -1171,6 +1210,9 @@ Note: To rotate touch events with output rotation, use the libinput
     <leftHanded></leftHanded>
     <pointerSpeed></pointerSpeed>
     <accelProfile></accelProfile>
+    <motionCurve step="" points="" />
+    <scrollCurve step="" points="" />
+    <fallbackCurve step="" points="" />
     <tap>yes</tap>
     <tapButtonMap></tapButtonMap>
     <tapAndDrag></tapAndDrag>
@@ -1179,12 +1221,14 @@ Note: To rotate touch events with output rotation, use the libinput
     <middleEmulation></middleEmulation>
     <disableWhileTyping></disableWhileTyping>
     <clickMethod></clickMethod>
+    <clickfingerButtonMap></clickfingerButtonMap>
     <scrollMethod></scrollMethod>
     <naturalScrollEdge></naturalScrollEdge>
     <circularScroll></circularScroll>
     <scrollButton></scrollButton>
     <sendEventsMode></sendEventsMode>
     <calibrationMatrix></calibrationMatrix>
+    <rotationAngle></rotationAngle>
     <scrollFactor>1.0</scrollFactor>
   </device>
 </libinput>
@@ -1223,11 +1267,74 @@ Note: To rotate touch events with output rotation, use the libinput
 	\-1.0 and 1.0, with 0.0 being the default in most cases, and 1.0 being
 	the fastest.
 
-*<libinput><device><accelProfile>* [flat|adaptive]
+*<libinput><device><accelProfile>* [flat|adaptive|custom]
 	Set the pointer's acceleration profile for this category. Flat applies
 	no acceleration (the pointers velocity is constant), while adaptive
 	changes the pointers speed based the actual speed of your mouse or
 	finger on your touchpad.
+
+	The *custom* profile explicitly opts this category into libinput's native
+	custom acceleration. Without this selection, custom curves are ignored
+	and existing acceleration behavior is unchanged. Custom applies to the
+	whole device, replacing adaptive or flat acceleration. *pointerSpeed*
+	has no effect while custom is active. Removing the custom selection and
+	reloading restores the configured profile (or the device default).
+
+*<libinput><device><motionCurve>* step="FLOAT" points="FLOAT FLOAT ..."
+
+*<libinput><device><scrollCurve>* step="FLOAT" points="FLOAT FLOAT ..."
+
+*<libinput><device><fallbackCurve>* step="FLOAT" points="FLOAT FLOAT ..."
+	Configure libinput's custom Motion, Scroll and Fallback functions.
+	These require *accelProfile* to be *custom*. Motion controls pointer
+	movement; Scroll controls scrolling supported by libinput for the device.
+	Fallback covers unspecified functions and other movement types, including
+	pinch gesture movement; it is not a dedicated pinch-scale control.
+
+	*step* must be finite and greater than zero. *points* must contain 2 to
+	32 finite, non-negative output speeds, separated by whitespace. Input
+	speeds are 0, step, 2 times step, and so on, in device units per
+	millisecond. With nr_points values, the explicitly defined input-speed
+	samples run from 0.0 through step times (nr_points - 1). Libinput
+	linearly interpolates between these samples and linearly extrapolates
+	above the final sample using the final two points; it does not clamp
+	the input speed to the explicitly defined sample range.
+	These values are output speeds, not multipliers. At a non-zero input
+	speed, the effective acceleration factor is output_speed / input_speed.
+	For example, input 0.20 and output 0.040 give a factor of 0.20.
+	The identity curve step="1" points="0 1" gives a factor of one.
+	The same fields may be written as child elements:
+
+```
+<motionCurve>
+  <step>1</step>
+  <points>0 1</points>
+</motionCurve>
+```
+
+	Unspecified Motion and Scroll functions use Fallback. Unspecified Fallback
+	uses libinput's unaccelerated default. A scroll-only configuration thus
+	does not preserve adaptive pointer motion. *scrollFactor* still scales
+	the resulting scroll events. Curves depend on the device and require
+	tuning; they are not equivalent to an adaptive profile.
+
+	Example tuned on a Dell XPS 15 9520 for precise low-speed two-finger
+	scrolling while retaining responsive faster scrolling. These values are
+	device- and user-specific, not universal defaults. Only Scroll is tuned;
+	Motion and Fallback are custom 1:1 functions, not adaptive acceleration.
+
+```
+<accelProfile>custom</accelProfile>
+<motionCurve step="1" points="0 1" />
+<fallbackCurve step="1" points="0 1" />
+<scrollCurve step="0.10" points="0 0.015 0.040 0.075 0.120 0.210 0.348 0.546 0.800 0.990 1.100" />
+```
+
+	A malformed curve or a configuration rejected by libinput is logged
+	and the custom configuration is not applied. On reload, a fresh custom
+	configuration is created so omitted curves return to their defaults.
+	If the device does not support custom acceleration, its default profile
+	is retained.
 
 *<libinput><device><tap>* [yes|no]
 	Enable or disable tap-to-click for this category. This is enabled by
@@ -1287,8 +1394,20 @@ Note: To rotate touch events with output rotation, use the libinput
 
 	The default method depends on the touchpad hardware.
 
+*<libinput><device><clickfingerButtonMap>* [lrm|lmr]
+	When the *clickfinger* click method is in use, set the buttons mapped
+	to one-, two-, and three-finger clicks to the left button, right
+	button, and middle button, respectively (lrm), or to left button,
+	middle button, and right button (lmr).
+
+	The default mapping depends on the touchpad hardware.
+
+	This has no effect on devices which do not support the *clickfinger*
+	click method.
+
 *<libinput><device><scrollMethod>* [none|twofinger|edge|twofingerAndEdge|onbutton]
-	Configure the method by which physical movements are mapped to scroll events.
+	Configure the method by which physical movements are mapped to scroll
+	events.
 
 	The scroll methods available are:
 	- *twofinger* - Scroll by two fingers being placed on the surface of the
@@ -1317,7 +1436,8 @@ Note: To rotate touch events with output rotation, use the libinput
 *<libinput><device><scrollButton>* [button]
 	Set the button used for the *onbutton* scroll method.
 
-	*button* is the decimal form of a value from `linux/input-event-codes.h`.
+	*button* is the decimal form of a value
+	from `linux/input-event-codes.h`.
 
 *<libinput><device><sendEventsMode>* [yes|no|disabledOnExternalMouse]
 	Optionally enable or disable sending any device events.
@@ -1353,6 +1473,16 @@ The most common matrices are:
 	visit https://wayland.freedesktop.org/libinput/doc/latest/absolute-axes.html#calibration-of-absolute-devices
 	for more information.
 
+*<libinput><device><rotationAngle>* [0-359]
+	Rotate the device by the given angle in degrees clockwise. Motion events
+	are adjusted accordingly, which also rotates the direction of scrolling
+	and gestures. This is meant for devices which are physically mounted at
+	an angle, such as a trackball turned on its side.
+
+	This has no effect on devices for which libinput reports no rotation
+	support. It adjusts relative motion only; use *calibrationMatrix* to
+	rotate an absolute device such as a touchscreen.
+
 *<libinput><scrollFactor>*
 	Set scroll factor. Default is 1.0.
 
@@ -1366,7 +1496,7 @@ defined as shown below.
 
   <!-- Action -->
   <windowRule identifier="" title="" type="">
-    <action name=""/>
+    <action name="" />
   </windowRule>
 
   <!-- Property -->
@@ -1564,7 +1694,7 @@ This is the full list of interfaces that can be controlled with this mechanism:
 
 *XCURSOR_PATH*
 	Specify a colon-separated list of paths to look for mouse cursors in.
-	Default
+	Default is
 	~/.local/share/icons:
 	~/.icons:
 	/usr/share/icons:
@@ -1575,7 +1705,7 @@ This is the full list of interfaces that can be controlled with this mechanism:
 
 *XCURSOR_SIZE*
 	Specify an alternative mouse cursor size in pixels. Requires
-	XCURSOR_THEME to be set also. Default 24.
+	XCURSOR_THEME to be set also. Default is 24.
 
 *XCURSOR_THEME*
 	Specify a mouse cursor theme within XCURSOR_PATH.

@@ -300,7 +300,24 @@ configure_libinput(struct wlr_input_device *wlr_input_device)
 			wlr_log(WLR_INFO, "pointer speed not configured");
 		}
 
-		if (dc->accel_profile > 0) {
+		if (dc->accel_profile == LIBINPUT_CONFIG_ACCEL_PROFILE_CUSTOM) {
+			struct libinput_config_accel *config =
+				libinput_custom_accel_create(dc);
+			if (config) {
+				enum libinput_config_status status =
+					libinput_device_config_accel_apply(libinput_dev,
+						config);
+				if (status != LIBINPUT_CONFIG_STATUS_SUCCESS) {
+					wlr_log(WLR_ERROR, "custom acceleration: %s",
+						libinput_config_status_to_str(status));
+				} else {
+					wlr_log(WLR_INFO,
+						"custom acceleration configured; "
+						"pointerSpeed has no effect");
+				}
+				libinput_config_accel_destroy(config);
+			}
+		} else if (dc->accel_profile > 0) {
 			wlr_log(WLR_INFO,
 				"pointer accel profile configured (%d)",
 				dc->accel_profile);
@@ -355,6 +372,20 @@ configure_libinput(struct wlr_input_device *wlr_input_device)
 		 */
 
 		libinput_device_config_click_set_method(libinput_dev, dc->click_method);
+	}
+
+	libinput_device_config_click_set_clickfinger_button_map(libinput_dev,
+		libinput_device_config_click_get_default_clickfinger_button_map(
+			libinput_dev));
+	if ((libinput_device_config_click_get_methods(libinput_dev)
+			& LIBINPUT_CONFIG_CLICK_METHOD_CLICKFINGER) == 0
+			|| dc->clickfinger_button_map < 0) {
+		wlr_log(WLR_INFO, "clickfinger button map not configured");
+	} else {
+		wlr_log(WLR_INFO, "clickfinger button map configured (%d)",
+			dc->clickfinger_button_map);
+		libinput_device_config_click_set_clickfinger_button_map(
+			libinput_dev, dc->clickfinger_button_map);
 	}
 
 	libinput_device_config_scroll_set_method(libinput_dev,
@@ -412,6 +443,18 @@ configure_libinput(struct wlr_input_device *wlr_input_device)
 	} else {
 		wlr_log(WLR_INFO, "calibration matrix configured");
 		libinput_device_config_calibration_set_matrix(libinput_dev, dc->calibration_matrix);
+	}
+
+	libinput_device_config_rotation_set_angle(libinput_dev,
+		libinput_device_config_rotation_get_default_angle(libinput_dev));
+	if (libinput_device_config_rotation_is_available(libinput_dev) == 0
+			|| dc->rotation_angle < 0) {
+		wlr_log(WLR_INFO, "rotation angle not configured");
+	} else {
+		wlr_log(WLR_INFO, "rotation angle configured (%d)",
+			dc->rotation_angle);
+		libinput_device_config_rotation_set_angle(libinput_dev,
+			dc->rotation_angle);
 	}
 
 	wlr_log(WLR_INFO, "scroll factor configured (%g)", dc->scroll_factor);

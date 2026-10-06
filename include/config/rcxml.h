@@ -89,6 +89,7 @@ struct rcxml {
 	bool primary_selection;
 	bool window_animations;
 	char *prompt_command;
+	char *error_command;
 
 	/* placement */
 	enum lab_placement_policy placement_policy;
@@ -174,6 +175,7 @@ struct rcxml {
 	int snap_edge_range_outer;
 	int snap_edge_corner_range;
 	bool snap_overlay_enabled;
+	bool snap_overlay_on_top;
 	int snap_overlay_delay_inner;
 	int snap_overlay_delay_outer;
 	bool snap_top_maximize;

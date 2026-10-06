@@ -83,6 +83,7 @@ menu_create(struct menu *parent, const char *id,
 	menu->label = xstrdup(label ? label : id);
 	menu->parent = parent;
 	menu->is_pipemenu_child = waiting_for_pipe_menu;
+	menu->pending_auto_enter = false;
 	return menu;
 }
 
@@ -172,7 +173,7 @@ item_parse_accelerator(struct menuitem *item, const char *text)
 			accel_ptr = underscore + 1;
 			break;
 		} else {
-			/* Ignore empty accelertor */
+			/* Ignore empty accelerator */
 			break;
 		}
 	}
@@ -627,7 +628,7 @@ fill_menu(struct menu *parent, xmlNode *n)
 			 *
 			 * <?xml version="1.0" encoding="UTF-8"?>
 			 * <openbox_menu>
-			 *   <menu id="root-menu" label="foo" execute="bar"/>
+			 *   <menu id="root-menu" label="foo" execute="bar" />
 			 * </openbox_menu>
 			 */
 		} else {
@@ -1319,13 +1320,19 @@ handle_pipemenu_timeout(void *_ctx)
 	return 0;
 }
 
+static struct menu *get_selection_leaf(void);
+
 static int
 handle_pipemenu_readable(int fd, uint32_t mask, void *_ctx)
 {
 	struct menu_pipe_context *ctx = _ctx;
+	struct menu *menu = ctx->pipemenu;
 	/* two 4k pages + 1 NULL byte */
 	char data[8193];
 	ssize_t size;
+
+	/* Track if creation succeded */
+	bool create_success = false;
 
 	do {
 		/* leave space for terminating NULL byte */
@@ -1361,9 +1368,26 @@ handle_pipemenu_readable(int fd, uint32_t mask, void *_ctx)
 	}
 
 	create_pipe_menu(ctx);
+	create_success = true;
 
 clean_up:
+	/*
+	 * This unsets the waiting_for_pipemenu flag
+	 * so that menu_submenu_enter() won't be blocked
+	 */
 	pipemenu_ctx_destroy(ctx);
+
+	if (menu && menu->pending_auto_enter) {
+		menu->pending_auto_enter = false;
+
+		if (create_success) {
+			struct menu *active_leaf = get_selection_leaf();
+			if (active_leaf && active_leaf->selection.menu == menu) {
+				menu_submenu_enter();
+			}
+		}
+	}
+
 	return 0;
 }
 
@@ -1543,12 +1567,12 @@ menu_item_select_previous(void)
 	menu_item_select(/* forward */ false);
 }
 
-bool
-menu_item_select_by_accelerator(uint32_t accelerator)
+void
+menu_process_accelerator(uint32_t accelerator)
 {
 	struct menu *menu = get_selection_leaf();
 	if (!menu || wl_list_empty(&menu->menuitems)) {
-		return false;
+		return;
 	}
 
 	bool needs_exec = false;
@@ -1584,17 +1608,21 @@ menu_item_select_by_accelerator(uint32_t accelerator)
 	} while (current != start);
 
 	if (!next_selection) {
-		return false;
+		return;
 	}
 
 	menu_process_item_selection(next_selection);
+
 	if (needs_exec && next_selection->submenu) {
 		/* Since we can't execute a submenu, enter it */
 		needs_exec = false;
 		menu_submenu_enter();
+		return;
 	}
 
-	return needs_exec;
+	if (needs_exec) {
+		menu_call_selected_actions();
+	}
 }
 
 bool
@@ -1614,6 +1642,11 @@ menu_submenu_enter(void)
 {
 	struct menu *menu = get_selection_leaf();
 	if (!menu || !menu->selection.menu) {
+		return;
+	}
+
+	if (waiting_for_pipe_menu) {
+		menu->selection.menu->pending_auto_enter = true;
 		return;
 	}
 

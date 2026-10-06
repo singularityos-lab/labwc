@@ -21,6 +21,8 @@
     <!--
       # See labwc-config(5) for details
       <promptCommand></promptCommand>
+      # See labwc-config(5) for details
+      <errorCommand></errorCommand>
     -->
   </core>
 
@@ -170,6 +172,8 @@
     <cornerRange>50</cornerRange>
     <overlay enabled="yes">
       <delay inner="500" outer="500" />
+      <!-- Specify whether to draw the snap overlay above or below the window being dragged -->
+      <placement>below</placement>
     </overlay>
     <topMaximize>yes</topMaximize>
     <notifyClient>always</notifyClient>
@@ -280,6 +284,9 @@
     </keybind>
     <keybind key="W-a">
       <action name="ToggleMaximize" />
+    </keybind>
+    <keybind key="W-d">
+      <action name="ToggleShowDesktop" />
     </keybind>
     <keybind key="W-Left">
       <action name="SnapToEdge" direction="left" combine="yes" />
@@ -598,12 +605,14 @@
 
     All values are [yes|no] except for:
       - pointerSpeed [-1.0 to 1.0]
-      - accelProfile [flat|adaptive]
+      - accelProfile [flat|adaptive|custom]
       - tapButtonMap [lrm|lmr]
       - clickMethod [none|buttonAreas|clickfinger]
+      - clickfingerButtonMap [lrm|lmr]
       - scrollMethod [twoFinger|edge|twofingerAndEdge|onbutton|none]
       - sendEventsMode [yes|no|disabledOnExternalMouse]
       - calibrationMatrix [six float values split by space]
+      - rotationAngle [0-359]
       - scrollFactor [float]
 
     The following <libinput>...</libinput> block may not be complete for
@@ -626,13 +635,29 @@
       <!-- <middleEmulation>no</middleEmulation> -->
       <!-- <disableWhileTyping>yes</disableWhileTyping> -->
       <!-- <clickMethod>buttonAreas</clickMethod> -->
+      <!-- <clickfingerButtonMap>lrm</clickfingerButtonMap> -->
       <!-- <scrollMethod>twofinger</scrollMethod> -->
       <!-- <naturalScrollEdge>no</naturalScrollEdge> -->
       <!-- <circularScroll>no</circularScroll> -->
       <!-- <scrollButton>274</scrollButton> -->
       <!-- <sendEventsMode>yes</sendEventsMode> -->
       <!-- <calibrationMatrix>1 0 0 0 1 0</calibrationMatrix> -->
+      <!-- <rotationAngle>0</rotationAngle> -->
       <scrollFactor>1.0</scrollFactor>
+      <!--
+        Opt-in example tuned on a Dell XPS 15 9520 for precise low-speed
+        two-finger scrolling while retaining responsive faster scrolling.
+        Values are device- and user-specific, not universal defaults.
+        Motion and Fallback remain 1:1, not adaptive-profile equivalents.
+        Points specify output speed; step specifies input-speed spacing in
+        device units/ms. Curves are ignored unless accelProfile is custom.
+        pointerSpeed has no effect with custom. Missing Motion/Scroll uses
+        Fallback; missing Fallback means no acceleration.
+        <accelProfile>custom</accelProfile>
+        <motionCurve step="1" points="0 1" />
+        <scrollCurve step="0.10" points="0 0.015 0.040 0.075 0.120 0.210 0.348 0.546 0.800 0.990 1.100" />
+        <fallbackCurve step="1" points="0 1" />
+      -->
     </device>
   </libinput>
 
@@ -650,10 +675,10 @@
     #     string and '?' matches any single character.
 
     <windowRules>
-      <windowRule identifier="*"><action name="Maximize"/></windowRule>
-      <windowRule identifier="foo" serverDecoration="yes"/>
-      <windowRule title="bar" serverDecoration="yes"/>
-      <windowRule identifier="baz" title="quax" serverDecoration="yes"/>
+      <windowRule identifier="*"><action name="Maximize" /></windowRule>
+      <windowRule identifier="foo" serverDecoration="yes" />
+      <windowRule title="bar" serverDecoration="yes" />
+      <windowRule identifier="baz" title="quax" serverDecoration="yes" />
     </windowRules>
 
     # Example below for `lxqt-panel` and `pcmanfm-qt \-\-desktop`
@@ -664,18 +689,18 @@
       <windowRule identifier="lxqt-panel" matchOnce="true">
         <skipTaskbar>yes</skipTaskbar>
         <action name="MoveTo" x="0" y="0" />
-        <action name="ToggleAlwaysOnTop"/>
+        <action name="ToggleAlwaysOnTop" />
       </windowRule>
       <windowRule title="pcmanfm-desktop*">
         <skipTaskbar>yes</skipTaskbar>
         <skipWindowSwitcher>yes</skipWindowSwitcher>
         <fixedPosition>yes</fixedPosition>
         <action name="MoveTo" x="0" y="0" />
-        <action name="ToggleAlwaysOnBottom"/>
+        <action name="ToggleAlwaysOnBottom" />
       </windowRule>
       <windowRule identifier="org.qutebrowser.qutebrowser">
         <action name="ResizeTo" width="1024" height="800" />
-        <action name="AutoPlace"/>
+        <action name="AutoPlace" />
       </windowRule>
     </windowRules>
   -->

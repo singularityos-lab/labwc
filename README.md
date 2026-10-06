@@ -157,7 +157,7 @@ Build dependencies include:
 - meson, ninja, gcc/clang
 - wayland-protocols
 
-Disable xwayland with `meson -Dxwayland=disabled build/`
+Disable xwayland with `meson setup -Dxwayland=disabled build/`
 
 For OS/distribution specific details see [wiki].
 
@@ -217,6 +217,7 @@ If you have not created an rc.xml config file, default bindings will be:
 | `super`-`return`         | lab-sensible-terminal
 | `alt`-`F4`               | close window
 | `super`-`a`              | toggle maximize
+| `super`-`d`              | toggle show-desktop
 | `super`-`mouse-left`     | move window
 | `super`-`mouse-right`    | resize window
 | `super`-`arrow`          | resize window to fill half the output

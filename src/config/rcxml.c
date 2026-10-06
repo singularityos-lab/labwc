@@ -17,6 +17,7 @@
 #include "common/list.h"
 #include "common/macros.h"
 #include "common/mem.h"
+#include "common/nag.h"
 #include "common/nodename.h"
 #include "common/parse-bool.h"
 #include "common/parse-double.h"
@@ -615,9 +616,9 @@ fill_mousebind(xmlNode *node, const char *context)
 	/*
 	 * Example of what we are parsing:
 	 * <mousebind button="Left" action="DoubleClick">
-	 *   <action name="Focus"/>
-	 *   <action name="Raise"/>
-	 *   <action name="ToggleMaximize"/>
+	 *   <action name="Focus" />
+	 *   <action name="Raise" />
+	 *   <action name="ToggleMaximize" />
 	 * </mousebind>
 	 */
 
@@ -637,6 +638,7 @@ fill_mousebind(xmlNode *node, const char *context)
 		/* <mousebind button="" action="EVENT"> */
 		mousebind->mouse_event = mousebind_event_from_str(buf);
 	}
+	lab_xml_get_bool(node, "overrideInhibition", &mousebind->override_inhibition);
 
 	append_parsed_actions(node, &mousebind->actions);
 }
@@ -749,6 +751,9 @@ get_accel_profile(const char *s)
 	if (!strcasecmp(s, "flat")) {
 		return LIBINPUT_CONFIG_ACCEL_PROFILE_FLAT;
 	}
+	if (!strcasecmp(s, "custom")) {
+		return LIBINPUT_CONFIG_ACCEL_PROFILE_CUSTOM;
+	}
 	if (!strcasecmp(s, "adaptive")) {
 		return LIBINPUT_CONFIG_ACCEL_PROFILE_ADAPTIVE;
 	}
@@ -791,6 +796,21 @@ fill_libinput_category(xmlNode *node)
 	xmlNode *child;
 	char *key, *content;
 	LAB_XML_FOR_EACH(node, child, key, content) {
+		int curve_type = -1;
+		if (!strcasecmp(key, "motionCurve")) {
+			curve_type = LIBINPUT_ACCEL_TYPE_MOTION;
+		} else if (!strcasecmp(key, "scrollCurve")) {
+			curve_type = LIBINPUT_ACCEL_TYPE_SCROLL;
+		} else if (!strcasecmp(key, "fallbackCurve")) {
+			curve_type = LIBINPUT_ACCEL_TYPE_FALLBACK;
+		}
+		if (curve_type >= 0) {
+			if (!libinput_curve_parse(child,
+					&category->accel_curves[curve_type])) {
+				category->accel_curve_invalid = true;
+			}
+			continue;
+		}
 		if (string_null_or_empty(content)) {
 			wlr_log(WLR_ERROR, "Empty string is not allowed for "
 				"<libinput><device><%s>. Ignoring.", key);
@@ -923,6 +943,16 @@ fill_libinput_category(xmlNode *node)
 			} else {
 				wlr_log(WLR_ERROR, "invalid clickMethod");
 			}
+		} else if (!strcasecmp(key, "clickfingerButtonMap")) {
+			if (!strcasecmp(content, "lrm")) {
+				category->clickfinger_button_map =
+					LIBINPUT_CONFIG_CLICKFINGER_MAP_LRM;
+			} else if (!strcasecmp(content, "lmr")) {
+				category->clickfinger_button_map =
+					LIBINPUT_CONFIG_CLICKFINGER_MAP_LMR;
+			} else {
+				wlr_log(WLR_ERROR, "invalid clickfingerButtonMap");
+			}
 		} else if (!strcasecmp(key, "scrollMethod")) {
 			if (!strcasecmp(content, "none")) {
 				category->scroll_method =
@@ -978,6 +1008,15 @@ fill_libinput_category(xmlNode *node)
 				category->have_calibration_matrix = false;
 			}
 			g_strfreev(elements);
+		} else if (!strcasecmp(key, "rotationAngle")) {
+			char *end_str = NULL;
+			long angle = strtol(content, &end_str, 10);
+			if (*end_str != '\0' || angle < 0 || angle > 359) {
+				wlr_log(WLR_ERROR, "invalid rotationAngle %s, "
+					"expect 0-359", content);
+			} else {
+				category->rotation_angle = angle;
+			}
 		} else if (!strcasecmp(key, "scrollFactor")) {
 			set_double(content, &category->scroll_factor);
 		}
@@ -1181,6 +1220,10 @@ entry(xmlNode *node, char *nodename, char *content)
 	} else if (!strcasecmp(nodename, "thumbnailLabelFormat.osd.windowSwitcher")) {
 		xstrdup_replace(rc.window_switcher.osd.thumbnail_label_format, content);
 
+	} else if (!strcasecmp(nodename, "privilegedInterfaces")) {
+		rc.allowed_interfaces = 0;
+		return true;
+
 	} else if (!lab_xml_node_is_leaf(node)) {
 		/* parse children of nested nodes other than above */
 		return true;
@@ -1219,6 +1262,8 @@ entry(xmlNode *node, char *nodename, char *content)
 
 	} else if (!strcasecmp(nodename, "promptCommand.core")) {
 		xstrdup_replace(rc.prompt_command, content);
+	} else if (!strcasecmp(nodename, "errorCommand.core")) {
+		xstrdup_replace(rc.error_command, content);
 
 	} else if (!strcmp(nodename, "policy.placement")) {
 		enum lab_placement_policy policy = view_placement_parse(content);
@@ -1315,6 +1360,15 @@ entry(xmlNode *node, char *nodename, char *content)
 		rc.snap_edge_corner_range = atoi(content);
 	} else if (!strcasecmp(nodename, "enabled.overlay.snapping")) {
 		set_bool(content, &rc.snap_overlay_enabled);
+	} else if (!strcasecmp(nodename, "placement.overlay.snapping")) {
+		if (!strcasecmp(content, "above")) {
+			rc.snap_overlay_on_top = true;
+		} else if (!strcasecmp(content, "below")) {
+			rc.snap_overlay_on_top = false;
+		} else {
+			wlr_log(WLR_ERROR,
+				"ignoring invalid value for overlay placement");
+		}
 	} else if (!strcasecmp(nodename, "inner.delay.overlay.snapping")) {
 		rc.snap_overlay_delay_inner = atoi(content);
 	} else if (!strcasecmp(nodename, "outer.delay.overlay.snapping")) {
@@ -1500,8 +1554,6 @@ entry(xmlNode *node, char *nodename, char *content)
 		rc.mag_increment = MAX(0, rc.mag_increment);
 	} else if (!strcasecmp(nodename, "useFilter.magnifier")) {
 		set_bool(content, &rc.mag_filter);
-	} else if (!strcasecmp(nodename, "privilegedInterfaces")) {
-		rc.allowed_interfaces = 0;
 	} else if (!strcasecmp(nodename, "allow.privilegedInterfaces")) {
 		uint32_t iface_id = parse_privileged_interface(content);
 		if (iface_id) {
@@ -1536,7 +1588,7 @@ rcxml_parse_xml(struct buf *b)
 	int options = 0;
 	xmlDoc *d = xmlReadMemory(b->data, b->len, NULL, NULL, options);
 	if (!d) {
-		wlr_log(WLR_ERROR, "error parsing config file");
+		nag_log(WLR_ERROR, "error parsing config file");
 		return;
 	}
 	xmlNode *root = xmlDocGetRootElement(d);
@@ -1636,6 +1688,7 @@ rcxml_init(void)
 	rc.snap_edge_range_outer = 10;
 	rc.snap_edge_corner_range = 50;
 	rc.snap_overlay_enabled = true;
+	rc.snap_overlay_on_top = false;
 	rc.snap_overlay_delay_inner = 500;
 	rc.snap_overlay_delay_outer = 500;
 	rc.snap_top_maximize = true;
@@ -1891,6 +1944,15 @@ post_processing(void)
 				"--layer overlay "
 				"--timeout 0");
 	}
+	if (!rc.error_command) {
+		rc.error_command =
+			xstrdup("labnag "
+				"--message 'Config errors detected' "
+				"--button-dismiss 'Close' "
+				"--layer overlay "
+				"--timeout 0 "
+				"--detailed-message");
+	}
 	if (!rc.fallback_app_icon_name) {
 		rc.fallback_app_icon_name = xstrdup("labwc");
 	}
@@ -2136,7 +2198,7 @@ rcxml_read(const char *filename)
 			continue;
 		}
 
-		wlr_log(WLR_INFO, "read config file %s", path->string);
+		nag_log(WLR_INFO, "read config file %s", path->string);
 
 		rcxml_parse_xml(&b);
 		buf_reset(&b);
@@ -2158,6 +2220,7 @@ rcxml_finish(void)
 	zfree(rc.font_menuitem.name);
 	zfree(rc.font_osd.name);
 	zfree(rc.prompt_command);
+	zfree(rc.error_command);
 	zfree(rc.theme_name);
 	zfree(rc.icon_theme_name);
 	zfree(rc.fallback_app_icon_name);

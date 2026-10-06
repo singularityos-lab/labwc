@@ -1,0 +1,80 @@
+# Labwc pot file
+# Copyright (C) 2024
+# This file is distributed under the same license as the labwc package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: labwc\n"
+"Report-Msgid-Bugs-To: https://github.com/labwc/labwc/issues\n"
+"POT-Creation-Date: 2024-09-19 21:09+1000\n"
+"PO-Revision-Date: 2026-09-14 05:29+0000\n"
+"Last-Translator: tejasdarsh12-collab <tejasdarsh12@gmail.com>\n"
+"Language-Team: Hindi <https://translate.lxqt-project.org/projects/labwc/"
+"labwc/hi/>\n"
+"Language: hi\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=n > 1;\n"
+"X-Generator: Weblate 4.2.1\n"
+
+#: src/menu/menu.c:1016
+msgid "Go there..."
+msgstr "वहाँ जाएँ..."
+
+#: src/menu/menu.c:1034
+msgid "Terminal"
+msgstr "टर्मिनल"
+
+#: src/menu/menu.c:1040
+msgid "Reconfigure"
+msgstr "पुनः कॉन्फ़िगर"
+
+#: src/menu/menu.c:1042
+msgid "Exit"
+msgstr "बाहर"
+
+#: src/menu/menu.c:1056
+msgid "Minimize"
+msgstr "कम करना"
+
+#: src/menu/menu.c:1058
+msgid "Maximize"
+msgstr "अधिकतम"
+
+#: src/menu/menu.c:1060
+msgid "Fullscreen"
+msgstr "पूर्ण स्क्रीन"
+
+#: src/menu/menu.c:1062
+msgid "Roll Up/Down"
+msgstr "ऊपर/नीचे करें"
+
+#: src/menu/menu.c:1064
+msgid "Decorations"
+msgstr "शीर्षक टाईटल"
+
+#: src/menu/menu.c:1066
+msgid "Always on Top"
+msgstr "हमेशा से ज़्यादा"
+
+#: src/menu/menu.c:1071
+msgid "Move Left"
+msgstr "बाएं खिसको"
+
+#: src/menu/menu.c:1078
+msgid "Move Right"
+msgstr "दाईं ओर जाएँ"
+
+#: src/menu/menu.c:1083
+msgid "Always on Visible Workspace"
+msgstr "हमेशा विज़िबल वर्कस्पेस पर"
+
+#: src/menu/menu.c:1086
+msgid "Workspace"
+msgstr "कार्यस्थान"
+
+#: src/menu/menu.c:1089
+msgid "Close"
+msgstr "बंद"

@@ -11,6 +11,7 @@
 #include "singularity-splash.h"
 #include <assert.h>
 #include <drm_fourcc.h>
+#include <glib.h>
 #include <strings.h>
 #include <wlr/backend/wayland.h>
 #include <wlr/config.h>
@@ -27,6 +28,7 @@
 #include "common/macros.h"
 #include "common/mem.h"
 #include "common/scene-helpers.h"
+#include "common/string-helpers.h"
 #include "config/rcxml.h"
 #include "labwc.h"
 #include "layers.h"
@@ -85,7 +87,8 @@ uint32_t output_formats_10bit[] = {
 };
 
 static bool
-output_set_render_format(struct output *output, uint32_t candidates[], size_t count)
+output_set_render_format(struct output *output, uint32_t candidates[],
+		size_t count, bool silent)
 {
 	for (size_t i = 0; i < count; i++) {
 		wlr_output_state_set_render_format(&output->pending, candidates[i]);
@@ -93,6 +96,16 @@ output_set_render_format(struct output *output, uint32_t candidates[], size_t co
 			return true;
 		}
 	}
+	if (!silent) {
+		wlr_log(WLR_DEBUG, "output %s supports none of the %zu candidate"
+			" render formats", output->wlr_output->name, count);
+	}
+	/*
+	 * Leaving the last candidate tried on the pending state means no
+	 * swapchain can be created for this output at all, so clear the flag
+	 * and leave the format alone instead.
+	 */
+	output->pending.committed &= ~WLR_OUTPUT_STATE_RENDER_FORMAT;
 	return false;
 }
 
@@ -174,14 +187,14 @@ output_state_setup_hdr(struct output *output, bool silent)
 		hdr_succeeded = true;
 	} else if (render_bit_depth == LAB_RENDER_BIT_DEPTH_10) {
 		hdr_succeeded = output_set_render_format(output, output_formats_10bit,
-			ARRAY_SIZE(output_formats_10bit));
+			ARRAY_SIZE(output_formats_10bit), silent);
 		if (!hdr_succeeded) {
 			if (!silent) {
 				wlr_log(WLR_INFO, "No 10 bit color formats"
 					" supported, HDR disabled.");
 			}
 			if (!output_set_render_format(output, output_formats_8bit,
-					ARRAY_SIZE(output_formats_8bit))) {
+					ARRAY_SIZE(output_formats_8bit), silent)) {
 				if (!silent) {
 					wlr_log(WLR_ERROR, "No 8 bit color formats"
 						" supported either!");
@@ -190,7 +203,7 @@ output_state_setup_hdr(struct output *output, bool silent)
 		}
 	} else {
 		if (!output_set_render_format(output, output_formats_8bit,
-				ARRAY_SIZE(output_formats_8bit)) && !silent) {
+				ARRAY_SIZE(output_formats_8bit), silent) && !silent) {
 			wlr_log(WLR_ERROR, "No 8 bit color formats supported!");
 		}
 	}
@@ -282,6 +295,21 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 	if (seat->overlay.active.output == output) {
 		overlay_finish(seat);
 	}
+
+	/*
+	 * Destroy the scene output before changing the scene graph below.
+	 * Otherwise those changes can send a surface-enter for this output while
+	 * its destroy signal is already being emitted. The new listener then
+	 * misses that signal and makes wlr_output_finish() abort because
+	 * output->events.bind is not empty.
+	 *
+	 * See https://gitlab.freedesktop.org/wlroots/wlroots/-/issues/4096
+	 */
+	if (output->scene_output) {
+		wlr_scene_output_destroy(output->scene_output);
+		output->scene_output = NULL;
+	}
+
 	wl_list_remove(&output->link);
 	wl_list_remove(&output->frame.link);
 	wl_list_remove(&output->destroy.link);
@@ -332,10 +360,6 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 		wl_display_terminate(server.wl_display);
 	}
 
-	/*
-	 * output->scene_output (if still around at this point) is
-	 * destroyed automatically when the wlr_output is destroyed
-	 */
 	free(output);
 }
 
@@ -399,9 +423,9 @@ add_output_to_layout(struct output *output)
 			return;
 		}
 		/*
-		 * Note: wlr_scene_output_layout_add_output() is not
-		 * safe to call twice, so we call it only when initially
-		 * creating the scene_output.
+		 * Note: wlr_scene_output_layout_add_output() is safe to
+		 * call multiple times, but we only need to add the output
+		 * when initially creating the scene_output.
 		 */
 		wlr_scene_output_layout_add_output(server.scene_layout,
 			layout_output, output->scene_output);
@@ -534,6 +558,30 @@ configure_new_output(struct output *output)
 	server.pending_output_layout_change--;
 
 	/*
+	 * Force the initial modeset commit to actually happen.
+	 *
+	 * lab_wlr_scene_output_commit() skips the real commit whenever the
+	 * scene reports neither damage nor needs_frame. But on this very
+	 * first commit the output has not been modeset yet, so its resolution
+	 * is still 0x0: scene damage is clipped against that empty area and
+	 * can never accumulate, and needs_frame is never raised on its own.
+	 * As a result the enabled=true state set above would never be
+	 * committed and the output would stay black until some unrelated
+	 * event (VT switch, hotplug, display-manager restart) happens to
+	 * raise needs_frame.
+	 *
+	 * With hardware cursors this is masked, because uploading the cursor
+	 * image raises needs_frame as a side effect. With
+	 * WLR_NO_HARDWARE_CURSORS=1 (software cursors) that path is gone and
+	 * the missing initial commit becomes reliably reproducible, e.g.
+	 * under QEMU/virtio-gpu.
+	 *
+	 * Schedule a frame here so needs_frame is raised and this enable is
+	 * always committed, independent of the cursor mode.
+	 */
+	wlr_output_schedule_frame(wlr_output);
+
+	/*
 	 * Commit the output this way instead, HDR needs a buffer, and
 	 * this commit must be called after the output is added to the
 	 * layout above.
@@ -613,9 +661,10 @@ handle_new_output(struct wl_listener *listener, void *data)
 	}
 
 	if (wlr_output_is_wl(wlr_output)) {
-		char title[64];
-		snprintf(title, sizeof(title), "%s - %s", "labwc", wlr_output->name);
-		wlr_wl_output_set_title(wlr_output, title);
+		GString *title = g_string_new(server.title_fmt);
+		g_string_replace(title, "%o", wlr_output->name, 0);
+		wlr_wl_output_set_title(wlr_output, title->str);
+		g_string_free(title, TRUE);
 		wlr_wl_output_set_app_id(wlr_output, "labwc");
 	}
 
@@ -873,12 +922,9 @@ output_config_apply(struct wlr_output_configuration_v1 *config)
 			workspaces_output_leave(output);
 
 			/*
-			 * At time of writing, wlr_output_layout_remove()
-			 * indirectly destroys the wlr_scene_output, but
-			 * this behavior may change in future. To remove
-			 * doubt and avoid either a leak or double-free,
-			 * explicitly destroy the wlr_scene_output before
-			 * calling wlr_output_layout_remove().
+			 * wlr_output_layout_remove() only unbinds the
+			 * wlr_scene_output from the layout; it does not
+			 * destroy it. Destroy explicitly to avoid a leak.
 			 */
 			wlr_scene_output_destroy(output->scene_output);
 			wlr_output_layout_remove(server.output_layout, o);

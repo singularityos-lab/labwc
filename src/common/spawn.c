@@ -30,13 +30,30 @@ set_cloexec(int fd)
 	int flags = fcntl(fd, F_GETFD);
 	if (flags == -1) {
 		wlr_log_errno(WLR_ERROR,
-			"Unable to set the CLOEXEC flag: fnctl failed");
+			"Unable to get the CLOEXEC flag: fcntl failed");
 		return false;
 	}
 	flags = flags | FD_CLOEXEC;
 	if (fcntl(fd, F_SETFD, flags) == -1) {
 		wlr_log_errno(WLR_ERROR,
-			"Unable to set the CLOEXEC flag: fnctl failed");
+			"Unable to set the CLOEXEC flag: fcntl failed");
+		return false;
+	}
+	return true;
+}
+
+static bool
+set_nonblock(int fd)
+{
+	int flags = fcntl(fd, F_GETFL);
+	if (flags == -1) {
+		wlr_log_errno(WLR_ERROR,
+			"Unable to get the O_NONBLOCK flag: fcntl failed");
+		return false;
+	}
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+		wlr_log_errno(WLR_ERROR,
+			"Unable to set the O_NONBLOCK flag: fcntl failed");
 		return false;
 	}
 	return true;
@@ -153,6 +170,89 @@ spawn_primary_client(const char *command)
 		g_strfreev(argv);
 		return child;
 	}
+}
+
+pid_t
+spawn_piped_async_no_shell(const char *command, int *pipe_fd_w)
+{
+	assert(command);
+
+	GError *err = NULL;
+	gchar **argv = NULL;
+
+	/* Use glib's shell-parse to mimic Openbox's behaviour */
+	g_shell_parse_argv((gchar *)command, NULL, &argv, &err);
+	if (err) {
+		g_message("%s", err->message);
+		g_error_free(err);
+		return -1;
+	}
+
+	int pipe_rw[2];
+	if (pipe(pipe_rw) != 0) {
+		wlr_log(WLR_ERROR, "unable to pipe()");
+		g_strfreev(argv);
+		return -1;
+	}
+
+	pid_t child = 0;
+	child = fork();
+	if (child < 0) {
+		wlr_log(WLR_ERROR, "unable to fork() child");
+		close(pipe_rw[0]);
+		close(pipe_rw[1]);
+		g_strfreev(argv);
+		return child;
+	}
+
+	if (child == 0) {
+		/* Child */
+		reset_signals_and_limits();
+
+		/*
+		 * replace stdout and stderr with /dev/null
+		 * and stdin with the read end of the pipe
+		 */
+		close(pipe_rw[1]);
+		dup2(pipe_rw[0], STDIN_FILENO);
+		close(pipe_rw[0]);
+
+		int dev_null = open("/dev/null", O_WRONLY);
+		if (dev_null < 0) {
+			wlr_log_errno(WLR_ERROR, "opening /dev/null failed");
+			/*
+			 * Just close stdout and stderr and
+			 * hope $command can deal with that.
+			 */
+			close(STDOUT_FILENO);
+			close(STDERR_FILENO);
+		} else {
+			dup2(dev_null, STDOUT_FILENO);
+			dup2(dev_null, STDERR_FILENO);
+			close(dev_null);
+		}
+		execvp(argv[0], argv);
+		_exit(1);
+	}
+
+	/* labwc */
+	close(pipe_rw[0]);
+	g_strfreev(argv);
+
+	/*
+	 * Prevent blocking of the labwc process when
+	 * writing more than the pipe buffer can hold.
+	 */
+	set_nonblock(pipe_rw[1]);
+
+	/*
+	 * Prevent leaking the write end of the pipe to further
+	 * children forked during the lifetime of the descriptor.
+	 */
+	set_cloexec(pipe_rw[1]);
+	*pipe_fd_w = pipe_rw[1];
+
+	return child;
 }
 
 pid_t
