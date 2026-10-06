@@ -2,12 +2,15 @@
 #include "protocols/singularity-tiling.h"
 #include <math.h>
 #include <stdlib.h>
+#include "common/mem.h"
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output_layout.h>
+#include <scenefx/types/wlr_scene.h>
 #include "foreign-toplevel/foreign.h"
 #include "labwc.h"
+#include "motion.h"
 #include "output.h"
 #include "overlay.h"
 #include "singularity-tiling-unstable-v1-protocol.h"
@@ -25,6 +28,84 @@ struct singularity_tiling_manager {
 };
 
 static struct singularity_tiling_manager *tiling_manager;
+
+struct tiling_slide {
+	struct wl_list link;
+	struct view *view;
+	int dx;
+	int dy;
+	struct motion_timed timed;
+	struct wl_listener view_destroy;
+};
+
+static struct wl_list tiling_slides = { &tiling_slides, &tiling_slides };
+
+static void
+tiling_slide_destroy(struct tiling_slide *slide)
+{
+	motion_timed_cancel(&slide->timed);
+	wl_list_remove(&slide->view_destroy.link);
+	wl_list_remove(&slide->link);
+	free(slide);
+}
+
+static void
+tiling_slide_place(struct tiling_slide *slide, double remaining)
+{
+	struct view *view = slide->view;
+	if (!view->scene_tree) {
+		return;
+	}
+	wlr_scene_node_set_position(&view->scene_tree->node,
+		view->current.x + (int)lround(slide->dx * remaining),
+		view->current.y + (int)lround(slide->dy * remaining));
+}
+
+static void
+handle_slide_update(struct motion_timed *timed, double eased, double linear)
+{
+	struct tiling_slide *slide = wl_container_of(timed, slide, timed);
+	tiling_slide_place(slide, 1.0 - eased);
+}
+
+static void
+handle_slide_done(struct motion_timed *timed)
+{
+	struct tiling_slide *slide = wl_container_of(timed, slide, timed);
+	tiling_slide_place(slide, 0.0);
+	tiling_slide_destroy(slide);
+}
+
+static void
+handle_slide_view_destroy(struct wl_listener *listener, void *data)
+{
+	struct tiling_slide *slide =
+		wl_container_of(listener, slide, view_destroy);
+	tiling_slide_destroy(slide);
+}
+
+static struct tiling_slide *
+tiling_slide_find(struct view *view)
+{
+	struct tiling_slide *slide;
+	wl_list_for_each(slide, &tiling_slides, link) {
+		if (slide->view == view) {
+			return slide;
+		}
+	}
+	return NULL;
+}
+
+static bool
+view_is_tileable(struct view *view)
+{
+	return view && (!view->impl->get_parent || !view->impl->get_parent(view))
+		&& (!view->impl->is_modal_dialog
+			|| !view->impl->is_modal_dialog(view))
+		&& (!view->impl->contains_window_type
+			|| !view->impl->contains_window_type(view,
+				LAB_WINDOW_TYPE_DIALOG));
+}
 
 static struct view *
 view_from_toplevel_resource(struct wl_resource *resource)
@@ -49,6 +130,50 @@ handle_set_geometry(struct wl_client *client, struct wl_resource *resource,
 		.width = width,
 		.height = height,
 	});
+	view_close_gesture_set_progress(view,
+		view->close_gesture_progress);
+}
+
+static void
+handle_set_geometry_animated(struct wl_client *client,
+	struct wl_resource *resource, struct wl_resource *toplevel_resource,
+	int32_t x, int32_t y, int32_t width, int32_t height)
+{
+	struct view *view = view_from_toplevel_resource(toplevel_resource);
+	if (!view || width < 1 || height < 1) {
+		return;
+	}
+	int from_x = view->current.x;
+	int from_y = view->current.y;
+	struct tiling_slide *slide = tiling_slide_find(view);
+	if (slide && view->scene_tree) {
+		from_x = view->scene_tree->node.x;
+		from_y = view->scene_tree->node.y;
+	}
+	handle_set_geometry(client, resource, toplevel_resource, x, y,
+		width, height);
+	bool animate = motion_enabled() && view->mapped && view->scene_tree
+		&& !view->minimized && motion_duration_ms(MOTION_TILING_SCROLL) > 0
+		&& (from_x != x || from_y != y);
+	if (!animate) {
+		if (slide) {
+			tiling_slide_destroy(slide);
+		}
+		return;
+	}
+	if (!slide) {
+		slide = znew(*slide);
+		slide->view = view;
+		slide->view_destroy.notify = handle_slide_view_destroy;
+		wl_signal_add(&view->events.destroy, &slide->view_destroy);
+		wl_list_insert(&tiling_slides, &slide->link);
+	}
+	slide->dx = from_x - x;
+	slide->dy = from_y - y;
+	slide->timed.update = handle_slide_update;
+	slide->timed.done = handle_slide_done;
+	tiling_slide_place(slide, 1.0);
+	motion_timed_start(&slide->timed, MOTION_TILING_SCROLL);
 }
 
 static void
@@ -60,6 +185,9 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 		return;
 	}
 	if (tiled) {
+		if (!view_is_tileable(view)) {
+			return;
+		}
 		if (!view->singularity_tiling_ssd_mode_valid) {
 			view->singularity_tiling_ssd_mode = view->ssd_mode;
 			view->singularity_tiling_ssd_mode_valid = true;
@@ -72,7 +200,8 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 		view->tiled = LAB_EDGE_TOP | LAB_EDGE_BOTTOM
 			| LAB_EDGE_LEFT | LAB_EDGE_RIGHT;
 		view->singularity_scrolling_tiled = true;
-		view_set_decorations(view, LAB_SSD_MODE_NONE, true);
+		view_set_decorations(view, LAB_SSD_MODE_BORDER, true);
+		view_notify_tiled(view);
 	} else if (view_is_tiled(view)) {
 		struct wlr_box natural = view->natural_geometry;
 		enum lab_ssd_mode ssd_mode = view->singularity_tiling_ssd_mode_valid
@@ -87,6 +216,28 @@ handle_set_tiled(struct wl_client *client, struct wl_resource *resource,
 	} else {
 		view->singularity_scrolling_tiled = false;
 	}
+}
+
+static void
+handle_get_tileable(struct wl_client *client, struct wl_resource *resource,
+	struct wl_resource *toplevel_resource)
+{
+	struct view *view = view_from_toplevel_resource(toplevel_resource);
+	zsingularity_tiling_manager_v1_send_tileable(resource, toplevel_resource,
+		view_is_tileable(view));
+}
+
+static void
+handle_set_close_gesture_progress(struct wl_client *client,
+	struct wl_resource *resource, struct wl_resource *toplevel_resource,
+	wl_fixed_t progress)
+{
+	struct view *view = view_from_toplevel_resource(toplevel_resource);
+	if (!view) {
+		return;
+	}
+	view_close_gesture_set_progress(view,
+		(float)wl_fixed_to_double(progress));
 }
 
 static void
@@ -217,6 +368,63 @@ handle_get_workarea(struct wl_client *client, struct wl_resource *resource,
 }
 
 static void
+handle_get_layout_workarea(struct wl_client *client,
+	struct wl_resource *resource)
+{
+	bool found = false;
+	int left = 0;
+	int right = 0;
+	int top = 0;
+	int bottom = 0;
+	struct output *output;
+	wl_list_for_each(output, &server.outputs, link) {
+		if (!output_is_usable(output)) {
+			continue;
+		}
+		struct wlr_box box =
+			output_usable_area_in_layout_coords(output);
+		if (!found) {
+			left = box.x;
+			right = box.x + box.width;
+			top = box.y;
+			bottom = box.y + box.height;
+			found = true;
+			continue;
+		}
+		left = left < box.x ? left : box.x;
+		right = right > box.x + box.width
+			? right : box.x + box.width;
+		top = top < box.y ? top : box.y;
+		bottom = bottom > box.y + box.height
+			? bottom : box.y + box.height;
+	}
+	if (!found) {
+		return;
+	}
+	zsingularity_tiling_manager_v1_send_layout_workarea(resource,
+		left, top, right - left, bottom - top);
+	wl_list_for_each(output, &server.outputs, link) {
+		if (!output_is_usable(output)) {
+			continue;
+		}
+		struct wlr_box box =
+			output_usable_area_in_layout_coords(output);
+		zsingularity_tiling_manager_v1_send_layout_output_workarea(
+			resource, box.x, box.y, box.width, box.height);
+	}
+	zsingularity_tiling_manager_v1_send_layout_workarea_done(resource);
+}
+
+static void
+handle_get_cursor_position(struct wl_client *client,
+	struct wl_resource *resource)
+{
+	zsingularity_tiling_manager_v1_send_cursor_position(resource,
+		(int32_t)round(server.seat.cursor->x),
+		(int32_t)round(server.seat.cursor->y));
+}
+
+static void
 handle_move_to_workspace(struct wl_client *client, struct wl_resource *resource,
 	struct wl_resource *toplevel_resource, uint32_t workspace_index)
 {
@@ -244,6 +452,11 @@ static const struct zsingularity_tiling_manager_v1_interface manager_impl = {
 	.set_scrolling_mode = handle_set_scrolling_mode,
 	.detach_tiled = handle_detach_tiled,
 	.set_drop_preview = handle_set_drop_preview,
+	.get_tileable = handle_get_tileable,
+	.set_close_gesture_progress = handle_set_close_gesture_progress,
+	.get_layout_workarea = handle_get_layout_workarea,
+	.get_cursor_position = handle_get_cursor_position,
+	.set_geometry_animated = handle_set_geometry_animated,
 };
 
 static void
@@ -276,7 +489,7 @@ singularity_tiling_init(void)
 	}
 	wl_list_init(&tiling_manager->resources);
 	tiling_manager->global = wl_global_create(server.wl_display,
-		&zsingularity_tiling_manager_v1_interface, 6,
+		&zsingularity_tiling_manager_v1_interface, 11,
 		tiling_manager, bind_manager);
 }
 
