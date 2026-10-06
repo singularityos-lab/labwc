@@ -45,6 +45,16 @@ struct output {
 	 * disconnected and connected again.
 	 */
 	uint64_t id_bit;
+
+	bool hdr_supported;
+	bool hdr_active;
+	const char *hdr_unsupported_reason;
+	struct wlr_color_transform *icc_transform;
+	char *icc_path;
+	const char *icc_error;
+
+	bool head_sent;
+	bool head_enabled;
 };
 
 #undef LAB_NR_LAYERS
@@ -81,6 +91,11 @@ void output_enable_adaptive_sync(struct output *output, bool enabled);
 void output_enable_hdr(struct output *output, struct wlr_output_state *os,
 	bool enabled, bool silent);
 void output_state_setup_hdr(struct output *output, bool silent);
+void output_color_load_profile(struct output *output);
+struct wlr_color_transform *output_color_transform(struct output *output);
+void output_color_release(struct output *output);
+void output_color_reconfigure(void);
+void output_color_write_state(void);
 
 /**
  * Notifies whether a fullscreen view is displayed on the given output.

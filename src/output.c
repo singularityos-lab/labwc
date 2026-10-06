@@ -10,6 +10,7 @@
 #include "output.h"
 #include "singularity-splash.h"
 #include <assert.h>
+#include <stdlib.h>
 #include <drm_fourcc.h>
 #include <glib.h>
 #include <strings.h>
@@ -33,7 +34,9 @@
 #include "config/rcxml.h"
 #include "labwc.h"
 #include "layers.h"
+#include "motion.h"
 #include "node.h"
+#include "output-config.h"
 #include "output-state.h"
 #include "output-virtual.h"
 #include "regions.h"
@@ -168,6 +171,13 @@ output_state_setup_hdr(struct output *output, bool silent)
 	bool hdr_succeeded = false;
 
 	enum render_bit_depth render_bit_depth = get_config_render_bit_depth();
+	const struct output_config *config = output_config_find(output->wlr_output->name);
+	if (config && config->has_hdr) {
+		render_bit_depth = config->hdr
+			? LAB_RENDER_BIT_DEPTH_10 : LAB_RENDER_BIT_DEPTH_8;
+	}
+	output->hdr_supported = hdr_supported;
+	output->hdr_unsupported_reason = unsupported_reason;
 	if (render_bit_depth == LAB_RENDER_BIT_DEPTH_DEFAULT) {
 		render_bit_depth = bit_depth_from_format(render_format);
 	}
@@ -210,6 +220,10 @@ output_state_setup_hdr(struct output *output, bool silent)
 	}
 
 	output_enable_hdr(output, &output->pending, hdr_succeeded, silent);
+	output->hdr_active = hdr_succeeded && hdr_supported;
+	if (!silent) {
+		output_color_write_state();
+	}
 }
 
 bool
@@ -273,6 +287,7 @@ handle_output_frame(struct wl_listener *listener, void *data)
 #endif
 
 	singularity_splash_maybe_show(output);
+	motion_output_frame(output);
 
 	struct wlr_scene_output *scene_output = output->scene_output;
 	struct wlr_output_state *pending = &output->pending;
@@ -312,6 +327,8 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 	}
 
 	wl_list_remove(&output->link);
+	output_color_release(output);
+	output_color_write_state();
 	wl_list_remove(&output->frame.link);
 	wl_list_remove(&output->destroy.link);
 	wl_list_remove(&output->request_state.link);
@@ -409,8 +426,10 @@ static void
 add_output_to_layout(struct output *output)
 {
 	struct wlr_output *wlr_output = output->wlr_output;
-	struct wlr_output_layout_output *layout_output =
-		wlr_output_layout_add_auto(server.output_layout, wlr_output);
+	const struct output_config *config = output_config_find(wlr_output->name);
+	struct wlr_output_layout_output *layout_output = config && config->has_position
+		? wlr_output_layout_add(server.output_layout, wlr_output, config->x, config->y)
+		: wlr_output_layout_add_auto(server.output_layout, wlr_output);
 	if (!layout_output) {
 		wlr_log(WLR_ERROR, "unable to add output to layout");
 		return;
@@ -533,9 +552,38 @@ configure_new_output(struct output *output)
 	struct wlr_output *wlr_output = output->wlr_output;
 
 	wlr_log(WLR_DEBUG, "enable output %s", wlr_output->name);
+	const struct output_config *config = output_config_find(wlr_output->name);
+	if (config && config->has_enabled && !config->enabled) {
+		wlr_log(WLR_INFO, "output %s is disabled in output.xml", wlr_output->name);
+		return;
+	}
 	wlr_output_state_set_enabled(&output->pending, true);
 
-	if (!output_test_auto(wlr_output, &output->pending,
+	if (config && config->has_scale) {
+		wlr_output_state_set_scale(&output->pending, config->scale);
+	}
+	if (config && config->has_transform) {
+		wlr_output_state_set_transform(&output->pending, config->transform);
+	}
+	bool saved_mode = false;
+	if (config && config->has_mode) {
+		struct wlr_output_mode *best = NULL;
+		struct wlr_output_mode *mode;
+		wl_list_for_each(mode, &wlr_output->modes, link) {
+			if (mode->width != config->width || mode->height != config->height) {
+				continue;
+			}
+			if (!best || abs(mode->refresh - config->refresh) < abs(best->refresh - config->refresh)) {
+				best = mode;
+			}
+		}
+		if (best) {
+			wlr_output_state_set_mode(&output->pending, best);
+			saved_mode = wlr_output_test_state(wlr_output, &output->pending);
+		}
+	}
+
+	if (!saved_mode && !output_test_auto(wlr_output, &output->pending,
 			/* is_client_request */ false)) {
 		wlr_log(WLR_INFO, "mode test failed for output %s",
 			wlr_output->name);
@@ -543,10 +591,13 @@ configure_new_output(struct output *output)
 		return;
 	}
 
-	if (rc.adaptive_sync == LAB_ADAPTIVE_SYNC_ENABLED) {
+	if (config && config->has_adaptive_sync) {
+		output_enable_adaptive_sync(output, config->adaptive_sync);
+	} else if (rc.adaptive_sync == LAB_ADAPTIVE_SYNC_ENABLED) {
 		output_enable_adaptive_sync(output, true);
 	}
 
+	output_color_load_profile(output);
 	output_state_setup_hdr(output, false);
 
 	/*
@@ -774,6 +825,7 @@ static void output_manager_init(void);
 void
 output_init(void)
 {
+	output_config_load();
 	server.gamma_control_manager_v1 =
 		wlr_gamma_control_manager_v1_create(server.wl_display);
 	wlr_scene_set_gamma_control_manager_v1(server.scene,
@@ -1046,8 +1098,16 @@ handle_output_manager_apply(struct wl_listener *listener, void *data)
  * a struct that we send to clients via the wlr_output_configuration v1
  * interface
  */
+static bool
+output_head_needs_reset(struct output *output)
+{
+	return output->head_sent && !output->head_enabled
+		&& output->wlr_output->enabled
+		&& !output->wlr_output->current_mode;
+}
+
 static struct
-wlr_output_configuration_v1 *create_output_config(void)
+wlr_output_configuration_v1 *create_output_config(bool skip_reset_heads)
 {
 	struct wlr_output_configuration_v1 *config =
 		wlr_output_configuration_v1_create();
@@ -1058,6 +1118,9 @@ wlr_output_configuration_v1 *create_output_config(void)
 
 	struct output *output;
 	wl_list_for_each(output, &server.outputs, link) {
+		if (skip_reset_heads && output_head_needs_reset(output)) {
+			continue;
+		}
 		struct wlr_output_configuration_head_v1 *head =
 			wlr_output_configuration_head_v1_create(config,
 				output->wlr_output);
@@ -1079,11 +1142,28 @@ static void
 do_output_layout_change(void)
 {
 	if (!server.pending_output_layout_change) {
+		struct output *output;
+		bool reset = false;
+		wl_list_for_each(output, &server.outputs, link) {
+			reset |= output_head_needs_reset(output);
+		}
+		if (reset) {
+			struct wlr_output_configuration_v1 *config =
+				create_output_config(true);
+			if (config) {
+				wlr_output_manager_v1_set_configuration(
+					server.output_manager, config);
+			}
+		}
 		struct wlr_output_configuration_v1 *config =
-			create_output_config();
+			create_output_config(false);
 		if (config) {
 			wlr_output_manager_v1_set_configuration(
 				server.output_manager, config);
+			wl_list_for_each(output, &server.outputs, link) {
+				output->head_sent = true;
+				output->head_enabled = output->wlr_output->enabled;
+			}
 		} else {
 			wlr_log(WLR_ERROR,
 				"wlr_output_manager_v1_set_configuration()");
