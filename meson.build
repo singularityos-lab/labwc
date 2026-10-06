@@ -168,7 +168,7 @@ labwc_deps = [
   # It must be listed before wlroots: libscenefx exports the same
   # wlr_scene_* symbols and the dynamic linker resolves them in link
   # order, so scenefx must come first.
-  dependency('scenefx-0.5', version: ['>=0.5.0'], default_options: ['default_library=static']),
+  dependency('scenefx-0.5', version: ['>=0.5.0'], default_options: ['default_library=static', 'examples=false']),
   wlroots,
   xkbcommon,
 	xcb_ewmh,
