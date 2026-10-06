@@ -6,5 +6,6 @@ struct output;
 
 void singularity_splash_maybe_show(struct output *output);
 void singularity_splash_dismiss(void);
+void singularity_splash_hold(void);
 
 #endif /* LABWC_SINGULARITY_SPLASH_H */

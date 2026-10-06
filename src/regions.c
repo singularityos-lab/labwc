@@ -5,6 +5,7 @@
 #include <assert.h>
 #include <float.h>
 #include <math.h>
+#include <stdio.h>
 #include <string.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/util/box.h>
@@ -15,6 +16,8 @@
 #include "labwc.h"
 #include "output.h"
 #include "view.h"
+
+static struct wl_list snap_zones = { &snap_zones, &snap_zones };
 
 bool
 regions_should_snap(void)
@@ -62,6 +65,9 @@ regions_from_cursor(void)
 	struct region *closest_region = NULL;
 	struct region *region;
 	wl_list_for_each(region, &output->regions, link) {
+		if (region->permille) {
+			continue;
+		}
 		if (wlr_box_contains_point(&region->geo, lx, ly)) {
 			/* No need for sqrt((x1 - x2)^2 + (y1 - y2)^2) as we just compare */
 			dist = pow(region->center.x - lx, 2) + pow(region->center.y - ly, 2);
@@ -93,6 +99,15 @@ regions_reconfigure_output(struct output *output)
 		region_new->output = output;
 		region_new->name = xstrdup(region->name);
 		region_new->percentage = region->percentage;
+		wl_list_append(&output->regions, &region_new->link);
+	}
+
+	wl_list_for_each(region, &snap_zones, link) {
+		struct region *region_new = znew(*region_new);
+		region_new->output = output;
+		region_new->name = xstrdup(region->name);
+		region_new->percentage = region->percentage;
+		region_new->permille = true;
 		wl_list_append(&output->regions, &region_new->link);
 	}
 
@@ -132,10 +147,11 @@ regions_update_geometry(struct output *output)
 		 * so that there is no gap between regions due to rounding
 		 * variations
 		 */
-		int left = usable.width * perc->x / 100;
-		int right = usable.width * (perc->x + perc->width) / 100;
-		int top = usable.height * perc->y / 100;
-		int bottom = usable.height * (perc->y + perc->height) / 100;
+		int scale = region->permille ? 1000 : 100;
+		int left = usable.width * perc->x / scale;
+		int right = usable.width * (perc->x + perc->width) / scale;
+		int top = usable.height * perc->y / scale;
+		int bottom = usable.height * (perc->y + perc->height) / scale;
 		geo->x = usable.x + left;
 		geo->y = usable.y + top;
 		geo->width = right - left;
@@ -170,4 +186,42 @@ regions_destroy(struct seat *seat, struct wl_list *regions)
 		zfree(region->name);
 		zfree(region);
 	}
+}
+
+struct region *
+regions_snap_zone(struct output *output, struct wlr_box permille)
+{
+	assert(output);
+	char name[64];
+	snprintf(name, sizeof(name), "snap:%d,%d,%d,%d", permille.x,
+		permille.y, permille.width, permille.height);
+
+	struct region *region = regions_from_name(name, output);
+	if (region) {
+		return region;
+	}
+
+	bool known = false;
+	wl_list_for_each(region, &snap_zones, link) {
+		if (!strcmp(region->name, name)) {
+			known = true;
+			break;
+		}
+	}
+	if (!known) {
+		struct region *template = znew(*template);
+		template->name = xstrdup(name);
+		template->percentage = permille;
+		template->permille = true;
+		wl_list_append(&snap_zones, &template->link);
+	}
+
+	region = znew(*region);
+	region->output = output;
+	region->name = xstrdup(name);
+	region->percentage = permille;
+	region->permille = true;
+	wl_list_append(&output->regions, &region->link);
+	regions_update_geometry(output);
+	return region;
 }

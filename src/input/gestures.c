@@ -6,13 +6,13 @@
 #include "action.h"
 #include "common/macros.h"
 #include "config/gesturebind.h"
+#include "config/rcxml.h"
 #include "labwc.h"
 #include "idle.h"
 #include "protocols/singularity-gesture.h"
 #include "protocols/singularity-tiling.h"
 #include "workspaces.h"
 
-#define SWIPE_DIRECTION_LOCK_DISTANCE 10.0
 
 static void
 handle_pinch_begin(struct wl_listener *listener, void *data)
@@ -54,6 +54,119 @@ handle_pinch_end(struct wl_listener *listener, void *data)
 		seat->wlr_seat, event->time_msec, event->cancelled);
 }
 
+#define PAGE_WIDTH 400.0
+#define PAGE_HEIGHT 240.0
+#define VELOCITY_WINDOW_MS 150
+#define FLING_VELOCITY 0.6
+#define AXIS_SWITCH_DISTANCE 60.0
+
+static bool
+desktop_fingers(uint32_t fingers)
+{
+	return rc.gestures_enabled && fingers < 32
+		&& (rc.gesture_fingers & (1u << fingers)) != 0;
+}
+
+static void
+swipe_reset(struct seat *seat)
+{
+	seat->swipe.claimed = false;
+	seat->swipe.forwarded = false;
+	seat->swipe.shell_gesture = false;
+	seat->swipe.workspace_gesture = false;
+	seat->swipe.desktop = false;
+	seat->swipe.fingers = 0;
+	seat->swipe.direction = LAB_DIRECTION_INVALID;
+	seat->swipe.dx = 0;
+	seat->swipe.dy = 0;
+	seat->swipe.sdx = 0;
+	seat->swipe.sdy = 0;
+	seat->swipe.origin_x = 0;
+	seat->swipe.origin_y = 0;
+	seat->swipe.history_len = 0;
+	seat->swipe.history_next = 0;
+}
+
+static void
+swipe_record(struct seat *seat, uint32_t time_msec, double dx, double dy)
+{
+	int i = seat->swipe.history_next;
+	seat->swipe.history_time[i] = time_msec;
+	seat->swipe.history_dx[i] = dx;
+	seat->swipe.history_dy[i] = dy;
+	seat->swipe.history_next = (i + 1) % 32;
+	if (seat->swipe.history_len < 32) {
+		seat->swipe.history_len++;
+	}
+}
+
+static void
+swipe_velocity(struct seat *seat, uint32_t now, double *vx, double *vy)
+{
+	*vx = 0;
+	*vy = 0;
+	int len = seat->swipe.history_len;
+	if (len < 2) {
+		return;
+	}
+	double sum_x = 0, sum_y = 0;
+	uint32_t first = now, last = 0;
+	int used = 0;
+	for (int k = 0; k < len; k++) {
+		int i = (seat->swipe.history_next - 1 - k + 32) % 32;
+		uint32_t t = seat->swipe.history_time[i];
+		if (now - t > VELOCITY_WINDOW_MS) {
+			break;
+		}
+		if (used > 0) {
+			sum_x += seat->swipe.history_dx[(i + 1) % 32];
+			sum_y += seat->swipe.history_dy[(i + 1) % 32];
+		}
+		first = t;
+		if (used == 0) {
+			last = t;
+		}
+		used++;
+	}
+	if (used < 2 || last <= first) {
+		return;
+	}
+	*vx = sum_x / (double)(last - first);
+	*vy = sum_y / (double)(last - first);
+}
+
+static bool
+decide_commit(double progress, double velocity_along)
+{
+	if (velocity_along >= FLING_VELOCITY) {
+		return true;
+	}
+	if (velocity_along <= -FLING_VELOCITY) {
+		return false;
+	}
+	return progress >= 0.5;
+}
+
+static void
+update_workspace_swipe(struct seat *seat)
+{
+	int width = workspaces_swipe_width();
+	if (width < 1) {
+		return;
+	}
+	double moved = seat->swipe.sdx - seat->swipe.origin_x;
+	workspaces_swipe_update(moved / PAGE_WIDTH * width);
+	singularity_gesture_send_update(moved, 0);
+}
+
+static void
+start_shell_gesture(struct seat *seat, enum direction direction)
+{
+	seat->swipe.shell_gesture = true;
+	seat->swipe.direction = direction;
+	singularity_gesture_send_begin(seat->swipe.fingers, direction);
+}
+
 static void
 handle_swipe_begin(struct wl_listener *listener, void *data)
 {
@@ -62,23 +175,99 @@ handle_swipe_begin(struct wl_listener *listener, void *data)
 
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
-	seat->swipe.claimed = false;
+	swipe_reset(seat);
 	bool scrolling_candidate = event->fingers == 3
 		&& singularity_tiling_scrolling_mode_enabled();
-	bool workspace_candidate = event->fingers == 4;
-	seat->swipe.forwarded = !scrolling_candidate && !workspace_candidate
+	seat->swipe.desktop = desktop_fingers(event->fingers);
+	seat->swipe.forwarded = !scrolling_candidate && !seat->swipe.desktop
 		&& !gesturebind_claims(LAB_GESTURE_SWIPE, event->fingers);
-	seat->swipe.shell_gesture = false;
-	seat->swipe.workspace_gesture = false;
 	seat->swipe.fingers = event->fingers;
-	seat->swipe.direction = LAB_DIRECTION_INVALID;
-	seat->swipe.dx = 0;
-	seat->swipe.dy = 0;
 
 	if (seat->swipe.forwarded) {
 		wlr_pointer_gestures_v1_send_swipe_begin(seat->pointer_gestures,
 			seat->wlr_seat, event->time_msec, event->fingers);
 	}
+}
+
+static void
+decide_swipe(struct seat *seat, uint32_t time_msec)
+{
+	bool horizontal;
+	if (seat->swipe.desktop) {
+		seat->swipe.direction = gesture_direction_from_delta(
+			seat->swipe.sdx, seat->swipe.sdy);
+	} else {
+		seat->swipe.direction = gesture_direction_from_delta(
+			seat->swipe.dx, seat->swipe.dy);
+	}
+	horizontal = seat->swipe.direction == LAB_DIRECTION_LEFT
+		|| seat->swipe.direction == LAB_DIRECTION_RIGHT;
+	bool scrolling_swipe = seat->swipe.fingers == 3 && horizontal
+		&& singularity_tiling_scrolling_mode_enabled();
+
+	if (scrolling_swipe) {
+		seat->swipe.claimed = true;
+		if (singularity_gesture_has_clients()) {
+			start_shell_gesture(seat, seat->swipe.direction);
+		}
+		return;
+	}
+	if (seat->swipe.desktop) {
+		seat->swipe.claimed = true;
+		if (horizontal) {
+			seat->swipe.workspace_gesture =
+				workspaces_swipe_begin(seat->swipe.direction);
+			if (seat->swipe.workspace_gesture) {
+				singularity_gesture_send_begin(seat->swipe.fingers,
+					seat->swipe.direction);
+				return;
+			}
+		} else if (singularity_gesture_has_clients()) {
+			start_shell_gesture(seat, seat->swipe.direction);
+			return;
+		}
+		seat->swipe.claimed = gesturebind_claims_direction(LAB_GESTURE_SWIPE,
+			seat->swipe.fingers, seat->swipe.direction);
+		if (seat->swipe.claimed) {
+			return;
+		}
+	} else {
+		seat->swipe.claimed = gesturebind_claims_direction(LAB_GESTURE_SWIPE,
+			seat->swipe.fingers, seat->swipe.direction);
+		if (seat->swipe.claimed) {
+			if ((seat->swipe.fingers == 3 || seat->swipe.fingers == 4)
+					&& singularity_gesture_has_clients()) {
+				start_shell_gesture(seat, seat->swipe.direction);
+			}
+			return;
+		}
+	}
+	seat->swipe.forwarded = true;
+	wlr_pointer_gestures_v1_send_swipe_begin(seat->pointer_gestures,
+		seat->wlr_seat, time_msec, seat->swipe.fingers);
+	wlr_pointer_gestures_v1_send_swipe_update(seat->pointer_gestures,
+		seat->wlr_seat, time_msec, seat->swipe.dx, seat->swipe.dy);
+}
+
+static void
+maybe_switch_axis(struct seat *seat)
+{
+	if (!rc.gesture_two_dimensional || !seat->swipe.workspace_gesture) {
+		return;
+	}
+	double vertical = seat->swipe.sdy - seat->swipe.origin_y;
+	double horizontal = seat->swipe.sdx - seat->swipe.origin_x;
+	if (fabs(vertical) < AXIS_SWITCH_DISTANCE
+			|| fabs(vertical) < fabs(horizontal) * 0.6
+			|| !singularity_gesture_has_clients()) {
+		return;
+	}
+	bool commit = workspaces_swipe_fraction() >= 0.5;
+	singularity_gesture_send_end(false, commit);
+	workspaces_swipe_end_now(commit);
+	seat->swipe.workspace_gesture = false;
+	seat->swipe.origin_x = seat->swipe.sdx;
+	start_shell_gesture(seat, vertical > 0 ? LAB_DIRECTION_DOWN : LAB_DIRECTION_UP);
 }
 
 static void
@@ -91,51 +280,31 @@ handle_swipe_update(struct wl_listener *listener, void *data)
 	cursor_set_visible(seat, /* visible */ true);
 	seat->swipe.dx += event->dx;
 	seat->swipe.dy += event->dy;
+	double factor = rc.gesture_sensitivity * (rc.gesture_invert ? -1.0 : 1.0);
+	double sdx = seat->swipe.desktop ? event->dx * factor : event->dx;
+	double sdy = seat->swipe.desktop ? event->dy * factor : event->dy;
+	seat->swipe.sdx += sdx;
+	seat->swipe.sdy += sdy;
+	swipe_record(seat, event->time_msec, sdx, sdy);
 
 	if (!seat->swipe.claimed && !seat->swipe.forwarded
-			&& MAX(fabs(seat->swipe.dx), fabs(seat->swipe.dy))
-				>= SWIPE_DIRECTION_LOCK_DISTANCE) {
-		seat->swipe.direction = gesture_direction_from_delta(
-			seat->swipe.dx, seat->swipe.dy);
-		bool scrolling_swipe = seat->swipe.fingers == 3
-			&& (seat->swipe.direction == LAB_DIRECTION_LEFT
-				|| seat->swipe.direction == LAB_DIRECTION_RIGHT)
-			&& singularity_tiling_scrolling_mode_enabled();
-		bool workspace_swipe = seat->swipe.fingers == 4
-			&& (seat->swipe.direction == LAB_DIRECTION_LEFT
-				|| seat->swipe.direction == LAB_DIRECTION_RIGHT);
-		seat->swipe.claimed = scrolling_swipe || workspace_swipe
-			|| gesturebind_claims_direction(LAB_GESTURE_SWIPE,
-				seat->swipe.fingers, seat->swipe.direction);
-		if (seat->swipe.claimed && (seat->swipe.fingers == 3
-				|| seat->swipe.fingers == 4)) {
-			if (seat->swipe.fingers == 4
-					&& (seat->swipe.direction == LAB_DIRECTION_LEFT
-					|| seat->swipe.direction == LAB_DIRECTION_RIGHT)) {
-				seat->swipe.workspace_gesture = workspaces_swipe_begin(
-					seat->swipe.direction);
-			} else if (singularity_gesture_has_clients()) {
-				seat->swipe.shell_gesture = true;
-				singularity_gesture_send_begin(seat->swipe.fingers,
-					seat->swipe.direction);
-			}
-		}
-		if (!seat->swipe.claimed) {
-			seat->swipe.forwarded = true;
-			wlr_pointer_gestures_v1_send_swipe_begin(
-				seat->pointer_gestures, seat->wlr_seat,
-				event->time_msec, seat->swipe.fingers);
-			wlr_pointer_gestures_v1_send_swipe_update(
-				seat->pointer_gestures, seat->wlr_seat,
-				event->time_msec, seat->swipe.dx, seat->swipe.dy);
+			&& hypot(seat->swipe.dx, seat->swipe.dy)
+				>= rc.gesture_threshold) {
+		decide_swipe(seat, event->time_msec);
+		if (seat->swipe.forwarded) {
 			return;
 		}
 	}
 
 	if (seat->swipe.workspace_gesture) {
-		workspaces_swipe_update(seat->swipe.dx);
+		maybe_switch_axis(seat);
+	}
+	if (seat->swipe.workspace_gesture) {
+		update_workspace_swipe(seat);
 	} else if (seat->swipe.shell_gesture) {
-		singularity_gesture_send_update(seat->swipe.dx, seat->swipe.dy);
+		singularity_gesture_send_update(
+			seat->swipe.sdx - seat->swipe.origin_x,
+			seat->swipe.sdy - seat->swipe.origin_y);
 	}
 
 	if (seat->swipe.forwarded) {
@@ -158,6 +327,18 @@ forward_accumulated_swipe(struct seat *seat, uint32_t time_msec,
 		seat->wlr_seat, time_msec, cancelled);
 }
 
+static double
+along(enum direction direction, double x, double y)
+{
+	switch (direction) {
+	case LAB_DIRECTION_LEFT: return -x;
+	case LAB_DIRECTION_RIGHT: return x;
+	case LAB_DIRECTION_UP: return -y;
+	case LAB_DIRECTION_DOWN: return y;
+	default: return 0;
+	}
+}
+
 static void
 handle_swipe_end(struct wl_listener *listener, void *data)
 {
@@ -167,31 +348,54 @@ handle_swipe_end(struct wl_listener *listener, void *data)
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
 
+	double vx, vy;
+	swipe_velocity(seat, event->time_msec, &vx, &vy);
 	bool handled = false;
-	if (seat->swipe.claimed && !event->cancelled) {
+	if (seat->swipe.workspace_gesture) {
+		bool commit = false;
+		if (!event->cancelled) {
+			double v = along(seat->swipe.direction, vx, vy);
+			if (rc.gesture_two_dimensional && fabs(vy) > fabs(vx)) {
+				v = 0;
+			}
+			commit = decide_commit(workspaces_swipe_fraction(), v);
+		} else {
+			commit = workspaces_swipe_fraction() >= 0.5;
+		}
+		singularity_gesture_send_end(event->cancelled, commit);
+		int width = workspaces_swipe_width();
+		double velocity = event->cancelled ? 0.0
+			: vx * width / PAGE_WIDTH * 1000.0;
+		workspaces_swipe_release(commit, velocity);
+		handled = true;
+	} else if (seat->swipe.shell_gesture && seat->swipe.desktop) {
+		double moved = along(seat->swipe.direction,
+			seat->swipe.sdx - seat->swipe.origin_x,
+			seat->swipe.sdy - seat->swipe.origin_y);
+		double v = along(seat->swipe.direction, vx, vy);
+		if (rc.gesture_two_dimensional && fabs(vx) > fabs(vy)) {
+			v = 0;
+		}
+		bool commit = !event->cancelled && decide_commit(moved / PAGE_HEIGHT, v);
+		singularity_gesture_send_end(event->cancelled, commit);
+		handled = true;
+	} else if (seat->swipe.claimed && !event->cancelled) {
 		struct gesturebind *bind = gesturebind_match_direction(
 				LAB_GESTURE_SWIPE, seat->swipe.fingers,
 				seat->swipe.direction, seat->swipe.dx, seat->swipe.dy);
 		bool commit = bind != NULL;
-		if (seat->swipe.workspace_gesture) {
-			workspaces_swipe_end(commit);
-			handled = true;
-		} else if (seat->swipe.shell_gesture) {
+		if (seat->swipe.shell_gesture) {
 			singularity_gesture_send_end(false, commit);
 			handled = true;
 		} else if (bind) {
 			actions_run(NULL, &bind->actions, NULL);
 			handled = true;
 		}
-	}
-	if (event->cancelled && seat->swipe.workspace_gesture) {
-		workspaces_swipe_end(false);
-		handled = true;
 	} else if (event->cancelled && seat->swipe.shell_gesture) {
 		singularity_gesture_send_end(true, false);
 		handled = true;
 	}
-	if (!handled) {
+	if (!handled && !seat->swipe.claimed) {
 		if (!seat->swipe.forwarded) {
 			forward_accumulated_swipe(seat, event->time_msec,
 				event->cancelled);
@@ -201,14 +405,7 @@ handle_swipe_end(struct wl_listener *listener, void *data)
 				event->time_msec, event->cancelled);
 		}
 	}
-	seat->swipe.claimed = false;
-	seat->swipe.forwarded = false;
-	seat->swipe.shell_gesture = false;
-	seat->swipe.workspace_gesture = false;
-	seat->swipe.fingers = 0;
-	seat->swipe.direction = LAB_DIRECTION_INVALID;
-	seat->swipe.dx = 0;
-	seat->swipe.dy = 0;
+	swipe_reset(seat);
 }
 
 static void

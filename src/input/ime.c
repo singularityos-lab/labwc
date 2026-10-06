@@ -214,6 +214,20 @@ update_popup_position(struct input_method_popup *popup)
 			cursor_rect.x -= xdg_surface->geometry.x;
 			cursor_rect.y -= xdg_surface->geometry.y;
 		}
+	} else if (xdg_surface || layer_surface) {
+		struct wlr_scene_tree *tree = relay->focused_surface->data;
+		int lx, ly;
+		wlr_scene_node_coords(&tree->node, &lx, &ly);
+		cursor_rect = (struct wlr_box){
+			.x = lx,
+			.y = ly,
+			.width = relay->focused_surface->current.width,
+			.height = relay->focused_surface->current.height,
+		};
+		if (xdg_surface) {
+			cursor_rect.x -= xdg_surface->geometry.x;
+			cursor_rect.y -= xdg_surface->geometry.y;
+		}
 	} else {
 		cursor_rect = (struct wlr_box){0};
 	}

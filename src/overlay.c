@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "overlay.h"
 #include <assert.h>
+#include <math.h>
+#include <stdlib.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <scenefx/types/wlr_scene.h>
 #include "common/lab-scene-rect.h"
+#include "common/macros.h"
 #include "config/rcxml.h"
 #include "labwc.h"
 #include "output.h"
@@ -12,9 +15,7 @@
 #include "regions.h"
 #include "theme.h"
 #include "view.h"
-
-#define OVERLAY_ANIMATION_INTERVAL_MS 16
-#define OVERLAY_ANIMATION_STEP 0.1f
+#include "protocols/singularity-snap.h"
 
 static void
 handle_rect_destroy(struct wl_listener *listener, void *data)
@@ -37,9 +38,53 @@ handle_outgoing_rect_destroy(struct wl_listener *listener, void *data)
 	overlay->outgoing_opacity = 0.0f;
 }
 
+#define GROW_SEED_FRACTION 0.12
+
+static void
+place_rect(struct overlay *overlay, struct wlr_box box)
+{
+	if (!overlay->rect) {
+		return;
+	}
+	box.width = MAX(1, box.width);
+	box.height = MAX(1, box.height);
+	overlay->box = box;
+	lab_scene_rect_set_size(overlay->rect, box.width, box.height);
+	wlr_scene_node_set_position(&overlay->rect->tree->node, box.x, box.y);
+}
+
+static void
+handle_grow_update(struct motion_spring_anim *anim, double value)
+{
+	struct overlay *overlay = wl_container_of(anim, overlay, grow);
+	double t = overlay->grow_range > 0.0 ? value / overlay->grow_range : 1.0;
+	struct wlr_box from = overlay->grow_from;
+	struct wlr_box to = overlay->grow_to;
+	place_rect(overlay, (struct wlr_box){
+		.x = (int)lround(from.x + (to.x - from.x) * t),
+		.y = (int)lround(from.y + (to.y - from.y) * t),
+		.width = (int)lround(from.width + (to.width - from.width) * t),
+		.height = (int)lround(from.height + (to.height - from.height) * t),
+	});
+}
+
+static struct wlr_box
+cursor_seed_box(struct seat *seat, const struct wlr_box *target)
+{
+	int size = MAX(8, (int)lround(MIN(target->width, target->height)
+		* GROW_SEED_FRACTION));
+	size = MIN(size, MIN(target->width, target->height));
+	int x = (int)lround(seat->cursor->x) - size / 2;
+	int y = (int)lround(seat->cursor->y) - size / 2;
+	x = MAX(target->x, MIN(x, target->x + target->width - size));
+	y = MAX(target->y, MIN(y, target->y + target->height - size));
+	return (struct wlr_box){ .x = x, .y = y, .width = size, .height = size };
+}
+
 static void
 finish_animation(struct overlay *overlay)
 {
+	motion_timed_cancel(&overlay->animation);
 	if (overlay->rect) {
 		overlay->opacity = 1.0f;
 		lab_scene_rect_set_opacity(overlay->rect, 1.0f);
@@ -47,62 +92,44 @@ finish_animation(struct overlay *overlay)
 	if (overlay->outgoing_rect) {
 		wlr_scene_node_destroy(&overlay->outgoing_rect->tree->node);
 	}
-	if (overlay->animation_timer) {
-		wl_event_source_remove(overlay->animation_timer);
-		overlay->animation_timer = NULL;
+}
+
+static void
+handle_animation_update(struct motion_timed *timed, double eased, double linear)
+{
+	struct overlay *overlay = wl_container_of(timed, overlay, animation);
+	if (overlay->rect) {
+		overlay->opacity = overlay->animation_opacity_from
+			+ (1.0f - overlay->animation_opacity_from) * (float)linear;
+		lab_scene_rect_set_opacity(overlay->rect, overlay->opacity);
+	}
+	if (overlay->outgoing_rect) {
+		overlay->outgoing_opacity =
+			overlay->animation_outgoing_from * (1.0f - (float)linear);
+		lab_scene_rect_set_opacity(overlay->outgoing_rect,
+			overlay->outgoing_opacity);
 	}
 }
 
-static int
-handle_animation_timeout(void *data)
+static void
+handle_animation_done(struct motion_timed *timed)
 {
-	struct seat *seat = data;
-	struct overlay *overlay = &seat->overlay;
-	bool running = false;
-
-	if (overlay->rect && overlay->opacity < 1.0f) {
-		overlay->opacity = MIN(1.0f,
-			overlay->opacity + OVERLAY_ANIMATION_STEP);
-		lab_scene_rect_set_opacity(overlay->rect, overlay->opacity);
-		running = overlay->opacity < 1.0f;
-	}
-	if (overlay->outgoing_rect) {
-		overlay->outgoing_opacity = MAX(0.0f,
-			overlay->outgoing_opacity - OVERLAY_ANIMATION_STEP);
-		lab_scene_rect_set_opacity(overlay->outgoing_rect,
-			overlay->outgoing_opacity);
-		if (overlay->outgoing_opacity == 0.0f) {
-			wlr_scene_node_destroy(&overlay->outgoing_rect->tree->node);
-			overlay->outgoing_rect = NULL;
-		} else {
-			running = true;
-		}
-	}
-
-	if (running) {
-		if (wl_event_source_timer_update(overlay->animation_timer,
-				OVERLAY_ANIMATION_INTERVAL_MS) < 0) {
-			finish_animation(overlay);
-		}
-	} else {
-		wl_event_source_remove(overlay->animation_timer);
-		overlay->animation_timer = NULL;
-	}
-	return 0;
+	struct overlay *overlay = wl_container_of(timed, overlay, animation);
+	finish_animation(overlay);
 }
 
 static void
 start_animation(struct seat *seat)
 {
-	if (!seat->overlay.animation_timer) {
-		seat->overlay.animation_timer = wl_event_loop_add_timer(
-			server.wl_event_loop, handle_animation_timeout, seat);
-	}
-	if (!seat->overlay.animation_timer
-			|| wl_event_source_timer_update(seat->overlay.animation_timer,
-				OVERLAY_ANIMATION_INTERVAL_MS) < 0) {
-		finish_animation(&seat->overlay);
-	}
+	struct overlay *overlay = &seat->overlay;
+	overlay->animation_opacity_from = overlay->rect ? overlay->opacity : 1.0f;
+	overlay->animation_outgoing_from = overlay->outgoing_rect
+		? overlay->outgoing_opacity : 0.0f;
+	overlay->animation.update = handle_animation_update;
+	overlay->animation.done = handle_animation_done;
+	motion_timed_start_custom(&overlay->animation, MOTION_SNAP_PREVIEW,
+		motion_enabled() ? motion_duration_ms(MOTION_SNAP_PREVIEW) : 0,
+		MOTION_CURVE_LINEAR);
 }
 
 static void
@@ -156,7 +183,24 @@ show_overlay(struct seat *seat, struct theme_snapping_overlay *overlay_theme,
 	} else {
 		wlr_scene_node_place_below(node, &view->scene_tree->node);
 	}
-	wlr_scene_node_set_position(node, box->x, box->y);
+	struct overlay *overlay = &seat->overlay;
+	overlay->grow_to = *box;
+	if (!motion_enabled()) {
+		place_rect(overlay, *box);
+		return;
+	}
+	overlay->grow_from = overlay->outgoing_rect
+		? overlay->outgoing_box : cursor_seed_box(seat, box);
+	overlay->grow.update = handle_grow_update;
+	overlay->grow.done = NULL;
+	overlay->grow.clamp = true;
+	struct wlr_box from = overlay->grow_from;
+	overlay->grow_range = MAX(1.0, MAX(MAX(abs(box->x - from.x),
+		abs(box->y - from.y)), MAX(abs(box->width - from.width),
+		abs(box->height - from.height))));
+	place_rect(overlay, from);
+	motion_spring_start(&overlay->grow, MOTION_SPRING_GENTLE,
+		0.0, overlay->grow_range, 0.0);
 }
 
 static void
@@ -293,6 +337,16 @@ overlay_update(struct seat *seat)
 		return;
 	}
 
+	struct wlr_box snap_box;
+	if (singularity_snap_get_zone_preview(&snap_box)) {
+		show_tiling_drop_overlay(seat, &snap_box);
+		return;
+	}
+	if (singularity_snap_cursor_in_picker()) {
+		overlay_finish(seat);
+		return;
+	}
+
 	/* Region-snapping overlay */
 	if (regions_should_snap()) {
 		struct region *region = regions_from_cursor();
@@ -327,7 +381,9 @@ overlay_finish(struct seat *seat)
 		}
 		wl_list_remove(&seat->overlay.rect_destroy.link);
 		seat->overlay.rect_destroy.notify = NULL;
+		motion_spring_cancel(&seat->overlay.grow);
 		seat->overlay.outgoing_rect = seat->overlay.rect;
+		seat->overlay.outgoing_box = seat->overlay.box;
 		seat->overlay.outgoing_opacity = seat->overlay.opacity;
 		seat->overlay.outgoing_rect_destroy.notify =
 			handle_outgoing_rect_destroy;

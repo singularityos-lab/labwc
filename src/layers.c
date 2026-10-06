@@ -9,6 +9,7 @@
 #include "layers.h"
 #include "singularity-splash.h"
 #include <assert.h>
+#include <string.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <strings.h>
@@ -369,6 +370,11 @@ handle_unmap(struct wl_listener *listener, void *data)
 	 * arrange_one_layer() called by output_update_usable_area().
 	 */
 	layer->being_unmapped = true;
+
+	if (layer_surface->namespace
+			&& !strcmp(layer_surface->namespace, "singularity-handoff")) {
+		singularity_splash_hold();
+	}
 
 	if (layer_surface->output) {
 		output_update_usable_area(layer_surface->output->data);

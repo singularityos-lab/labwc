@@ -2,6 +2,7 @@
 #ifndef LABWC_OVERLAY_H
 #define LABWC_OVERLAY_H
 
+#include "motion.h"
 #include <stdbool.h>
 #include <wayland-server-core.h>
 #include <wlr/util/box.h>
@@ -34,7 +35,15 @@ struct overlay {
 
 	/* For delayed snap-to-edge overlay */
 	struct wl_event_source *timer;
-	struct wl_event_source *animation_timer;
+	struct motion_timed animation;
+	float animation_opacity_from;
+	float animation_outgoing_from;
+	struct motion_spring_anim grow;
+	struct wlr_box grow_from;
+	double grow_range;
+	struct wlr_box grow_to;
+	struct wlr_box box;
+	struct wlr_box outgoing_box;
 };
 
 /*

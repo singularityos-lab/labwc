@@ -2,6 +2,7 @@
 #ifndef LABWC_REGIONS_H
 #define LABWC_REGIONS_H
 
+#include <stdbool.h>
 #include <wlr/util/box.h>
 
 struct seat;
@@ -19,6 +20,7 @@ struct region {
 	char *name;
 	struct wlr_box geo;
 	struct wlr_box percentage;
+	bool permille;
 	struct {
 		int x;
 		int y;
@@ -64,5 +66,7 @@ void regions_destroy(struct seat *seat, struct wl_list *regions);
 /* Get output local region from cursor or name, may be NULL */
 struct region *regions_from_cursor(void);
 struct region *regions_from_name(const char *region_name, struct output *output);
+
+struct region *regions_snap_zone(struct output *output, struct wlr_box permille);
 
 #endif /* LABWC_REGIONS_H */

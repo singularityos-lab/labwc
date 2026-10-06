@@ -34,6 +34,13 @@ void workspaces_reconfigure(void);
 bool workspaces_swipe_begin(enum direction direction);
 void workspaces_swipe_update(double dx);
 void workspaces_swipe_end(bool commit);
+void workspaces_swipe_release(bool commit, double velocity);
+void workspaces_switch_animated(struct workspace *target);
+void workspaces_switch_output_animated(struct output *output,
+	struct workspace *target);
+void workspaces_swipe_end_now(bool commit);
+int workspaces_swipe_width(void);
+double workspaces_swipe_fraction(void);
 
 bool workspaces_per_output(void);
 struct workspace *workspaces_current_on(struct output *output);

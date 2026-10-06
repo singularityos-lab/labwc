@@ -115,6 +115,8 @@ struct ssd {
 		struct ssd_border_subtree {
 			struct wlr_scene_tree *tree;
 			struct wlr_scene_rect *top, *bottom, *left, *right;
+			struct wlr_scene_buffer *top_left, *top_right,
+				*bottom_left, *bottom_right;
 		} subtrees[2]; /* indexed by enum ssd_active_state */
 	} border;
 

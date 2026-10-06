@@ -21,6 +21,7 @@
 #include "config/libinput.h"
 #include "config/rcxml.h"
 #include "config/touch.h"
+#include "input/accessx.h"
 #include "input/ime.h"
 #include "input/tablet.h"
 #include "input/tablet-pad.h"
@@ -50,6 +51,8 @@ input_device_destroy(struct wl_listener *listener, void *data)
 		struct keyboard *keyboard = (struct keyboard *)input;
 		wl_list_remove(&keyboard->key.link);
 		wl_list_remove(&keyboard->modifiers.link);
+		wl_list_remove(&keyboard->accessx_key.link);
+		accessx_keyboard_destroy(keyboard);
 		keyboard_cancel_keybind_repeat(keyboard);
 	}
 	free(input);
@@ -539,9 +542,12 @@ new_keyboard(struct seat *seat, struct wlr_input_device *device, bool is_virtual
 	keyboard_set_numlock(kb);
 
 	if (is_virtual) {
+		wl_list_init(&keyboard->accessx_key.link);
 		/* key repeat information is usually synchronized via the keyboard group */
 		wlr_keyboard_set_repeat_info(kb, rc.repeat_rate, rc.repeat_delay);
 	} else {
+		/* Before the group, so filtered keys can skip its xkb update */
+		keyboard_setup_accessx(keyboard);
 		wlr_keyboard_group_add_keyboard(seat->keyboard_group, kb);
 	}
 
@@ -731,6 +737,8 @@ handle_focus_change(struct wl_listener *listener, void *data)
 			view_set_activated(server.active_view, false);
 		}
 		if (view) {
+			wl_list_remove(&view->focus_link);
+			wl_list_insert(&server.focus_order, &view->focus_link);
 			view_set_activated(view, true);
 			tablet_pad_enter_surface(seat, surface);
 		}

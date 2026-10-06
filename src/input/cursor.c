@@ -16,6 +16,7 @@
 #include <wlr/types/wlr_xcursor_manager.h>
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/util/region.h>
+#include "a11y.h"
 #include "action.h"
 #include "common/macros.h"
 #include "common/mem.h"
@@ -34,11 +35,13 @@
 #include "output.h"
 #include "resistance.h"
 #include "resize-outlines.h"
+#include "protocols/singularity-key-hold.h"
 #include "protocols/singularity-tiling.h"
 #include "ssd.h"
 #include "view.h"
 #include "workspaces.h"
 #include "xwayland.h"
+#include "protocols/singularity-snap.h"
 
 #if WLR_HAS_LIBINPUT_BACKEND
 	#include <wlr/backend/libinput.h>
@@ -327,6 +330,7 @@ process_cursor_move(uint32_t time)
 	resistance_move_apply(view, &x, &y);
 
 	view_move(view, x, y);
+	singularity_snap_move_update(view);
 	overlay_update(&server.seat);
 }
 
@@ -919,6 +923,7 @@ preprocess_cursor_motion(struct seat *seat, struct wlr_pointer *pointer,
 		return;
 	}
 	apply_constraint(seat, pointer, &dx, &dy);
+	a11y_pointer_motion(dx, dy);
 
 	/*
 	 * The cursor doesn't move unless we tell it to. The cursor
@@ -1180,6 +1185,11 @@ cursor_process_button_press(struct seat *seat, uint32_t button, uint32_t time_ms
 {
 	struct cursor_context ctx = get_cursor_context();
 
+	singularity_key_hold_pointer_button();
+	if (ctx.type == LAB_NODE_BUTTON_MAXIMIZE) {
+		singularity_snap_button_pressed();
+	}
+
 	/* Used on next button release to check if it can close menu or select menu item */
 	press_msec = time_msec;
 
@@ -1333,6 +1343,10 @@ handle_button(struct wl_listener *listener, void *data)
 	struct wlr_pointer_button_event *event = data;
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
+
+	if (a11y_pointer_button(event->button, event->state, event->time_msec)) {
+		return;
+	}
 
 	bool notify;
 	switch (event->state) {

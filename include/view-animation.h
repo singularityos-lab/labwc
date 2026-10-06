@@ -15,6 +15,8 @@ void view_animation_start_geometry(struct view_animation *animation,
 void view_animation_start_minimize(struct view_animation *animation,
 	bool minimized);
 void view_animation_start_open(struct view_animation *animation);
+void view_animation_start_close(struct view *view);
 void view_animation_cancel(struct view *view);
+void view_close_gesture_set_progress(struct view *view, float progress);
 
 #endif /* LABWC_VIEW_ANIMATION_H */

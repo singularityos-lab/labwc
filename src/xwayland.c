@@ -870,6 +870,7 @@ handle_unmap(struct wl_listener *listener, void *data)
 	if (!view->mapped) {
 		return;
 	}
+	view_animation_start_close(view);
 	view->mapped = false;
 	view_impl_unmap(view);
 

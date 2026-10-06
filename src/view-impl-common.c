@@ -3,6 +3,7 @@
 #include "view-impl-common.h"
 #include "foreign-toplevel/foreign.h"
 #include "labwc.h"
+#include "protocols/singularity-tiling.h"
 #include "singularity-splash.h"
 #include "view.h"
 #include "window-rules.h"
@@ -65,7 +66,11 @@ view_impl_unmap(struct view *view)
 	 * all, check for that case also.
 	 */
 	if (view == server.active_view || !server.active_view) {
-		desktop_focus_topmost_view();
+		if (singularity_tiling_scrolling_mode_enabled()) {
+			desktop_focus_previous_view(view);
+		} else {
+			desktop_focus_topmost_view();
+		}
 	}
 
 	/*

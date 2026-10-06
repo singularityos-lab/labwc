@@ -139,6 +139,7 @@ struct view {
 	enum view_type type;
 	const struct view_impl *impl;
 	struct wl_list link;
+	struct wl_list focus_link;
 
 	/* This is cleared when the view is not in the cycle list */
 	struct wl_list cycle_link;
@@ -182,6 +183,8 @@ struct view {
 	 * is requested (created by background-effect.c).
 	 */
 	struct wlr_scene_tree *blur_tree;
+	struct wlr_scene_buffer *close_gesture_snapshot;
+	float close_gesture_progress;
 
 	/* These are never NULL and an empty string is set instead. */
 	char *title;
@@ -205,6 +208,10 @@ struct view {
 	bool shaded;
 	bool minimized;
 	bool was_minimized_by_show_desktop_action;
+	bool stage_target_valid;
+	struct wlr_box stage_target;
+	uint32_t stage_group;
+	bool stage_hidden;
 	enum view_axis maximized;
 	bool fullscreen;
 	bool tearing_hint;
@@ -493,6 +500,7 @@ bool view_inhibits_actions(struct view *view, struct wl_list *actions);
 
 void view_set_activated(struct view *view, bool activated);
 void view_set_output(struct view *view, struct output *output);
+void view_notify_tiled(struct view *view);
 void view_close(struct view *view);
 
 /**

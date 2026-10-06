@@ -11,6 +11,7 @@
 #include "resize-indicator.h"
 #include "view.h"
 #include "window-rules.h"
+#include "protocols/singularity-snap.h"
 
 /*
  *   pos_old  pos_cursor
@@ -346,7 +347,8 @@ interactive_finish(struct view *view)
 	bool scrolling_tiled = view->singularity_scrolling_tiled;
 	if (server.input_mode == LAB_INPUT_STATE_MOVE
 			&& !singularity_tiling_scrolling_mode_enabled()) {
-		if (!snap_to_region(view)) {
+		if (!singularity_snap_move_finish(view)
+				&& !snap_to_region(view)) {
 			snap_to_edge(view);
 		}
 	}
@@ -377,6 +379,7 @@ interactive_cancel(struct view *view)
 	}
 
 	server.grabbed_view = NULL;
+	singularity_snap_move_cancel();
 
 	/*
 	 * It's possible that grabbed_view was set but interactive_begin()

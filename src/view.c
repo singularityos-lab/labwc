@@ -741,6 +741,9 @@ _minimize(struct view *view, bool minimized, bool *need_refocus)
 	}
 
 	view->minimized = minimized;
+	if (!minimized) {
+		view->stage_hidden = false;
+	}
 	wl_signal_emit_mutable(&view->events.minimized, NULL);
 	view_update_visibility(view);
 
@@ -1333,6 +1336,8 @@ view_apply_special_geometry(struct view *view)
 		view_apply_fullscreen_geometry(view);
 	} else if (view->maximized != VIEW_AXIS_NONE) {
 		view_apply_maximized_geometry(view);
+	} else if (view->singularity_scrolling_tiled) {
+		return;
 	} else if (view->tiled) {
 		view_apply_tiled_geometry(view);
 	} else if (view->tiled_region || view->tiled_region_evacuate) {
@@ -1402,7 +1407,7 @@ view_is_floating(struct view *view)
 		|| view_is_tiled(view));
 }
 
-static void
+void
 view_notify_tiled(struct view *view)
 {
 	assert(view);
@@ -1726,6 +1731,7 @@ view_set_fullscreen(struct view *view, bool fullscreen)
 		return;
 	}
 	view_animation_cancel(view);
+	view_close_gesture_set_progress(view, 0.0f);
 	if (fullscreen) {
 		if (!output_is_usable(view->output)) {
 			/* Prevent fullscreen with no available outputs */
@@ -2514,6 +2520,7 @@ void
 view_init(struct view *view)
 {
 	assert(view);
+	wl_list_init(&view->focus_link);
 
 	wl_signal_init(&view->events.new_app_id);
 	wl_signal_init(&view->events.new_title);
@@ -2539,6 +2546,7 @@ view_destroy(struct view *view)
 {
 	assert(view);
 	view_animation_cancel(view);
+	view_close_gesture_set_progress(view, 0.0f);
 
 	wl_signal_emit_mutable(&view->events.destroy, NULL);
 	snap_constraints_invalidate(view);
@@ -2623,6 +2631,7 @@ view_destroy(struct view *view)
 	zfree(view->app_id);
 
 	/* Remove view from server.views */
+	wl_list_remove(&view->focus_link);
 	wl_list_remove(&view->link);
 	free(view);
 

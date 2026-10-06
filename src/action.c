@@ -1395,11 +1395,10 @@ run_action(struct view *view, struct action *action,
 			}
 		}
 		if (follow && output_is_usable(workspace_output)) {
-			workspaces_switch_output(workspace_output, target_workspace,
-				/*update_focus*/ true);
+			workspaces_switch_output_animated(workspace_output,
+				target_workspace);
 		} else if (follow) {
-			workspaces_switch_to(target_workspace,
-				/*update_focus*/ true);
+			workspaces_switch_animated(target_workspace);
 		}
 		break;
 	}

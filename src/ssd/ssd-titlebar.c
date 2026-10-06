@@ -18,6 +18,7 @@
 #include "ssd-internal.h"
 #include "theme.h"
 #include "view.h"
+#include "protocols/singularity-snap.h"
 
 static void set_squared_corners(struct ssd *ssd, bool enable);
 static void set_alt_button_icon(struct ssd *ssd, enum lab_node_type type, bool enable);
@@ -507,6 +508,7 @@ ssd_update_hovered_button(struct wlr_scene_node *node)
 	if (button) {
 		update_button_state(button, LAB_BS_HOVERED, true);
 	}
+	singularity_snap_button_hovered(button);
 }
 
 bool
