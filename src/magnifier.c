@@ -8,11 +8,17 @@
 #include <wlr/types/wlr_output.h>
 #include <scenefx/types/wlr_scene.h>
 #include <wlr/util/transform.h>
+#include "color-filter.h"
 #include "common/box.h"
+#include "common/macros.h"
 #include "config/rcxml.h"
 #include "labwc.h"
 #include "output.h"
 #include "theme.h"
+
+#define CROSS_HAIRS_THICKNESS 8
+#define CROSS_HAIRS_GAP 24
+#define CROSS_HAIRS_OPACITY 0.66f
 
 static bool magnify_on;
 static double mag_scale = 0.0;
@@ -36,6 +42,45 @@ box_logical_to_physical(struct wlr_box *box, struct wlr_output *output)
 	wlr_box_transform(box, box,
 		wlr_output_transform_invert(output->transform),
 		output_w, output_h);
+}
+
+static void
+draw_cross_hairs(struct output *output, struct wlr_buffer *buffer,
+		struct wlr_box *mag_box, struct wlr_box *cursor)
+{
+	float scale = output->wlr_output->scale;
+	int thickness = MAX(1, (int)(CROSS_HAIRS_THICKNESS * scale));
+	int gap = (int)(CROSS_HAIRS_GAP * scale);
+	struct wlr_box lines[] = {
+		{ mag_box->x, cursor->y - thickness / 2,
+			cursor->x - gap - mag_box->x, thickness },
+		{ cursor->x + gap, cursor->y - thickness / 2,
+			mag_box->x + mag_box->width - cursor->x - gap, thickness },
+		{ cursor->x - thickness / 2, mag_box->y,
+			thickness, cursor->y - gap - mag_box->y },
+		{ cursor->x - thickness / 2, cursor->y + gap,
+			thickness, mag_box->y + mag_box->height - cursor->y - gap },
+	};
+
+	struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(
+		server.renderer, buffer, NULL);
+	if (!pass) {
+		return;
+	}
+	for (size_t i = 0; i < ARRAY_SIZE(lines); i++) {
+		struct wlr_box line;
+		if (!wlr_box_intersection(&line, &lines[i], mag_box)) {
+			continue;
+		}
+		wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+			.box = line,
+			.color = {
+				.r = CROSS_HAIRS_OPACITY,
+				.a = CROSS_HAIRS_OPACITY,
+			},
+		});
+	}
+	wlr_render_pass_submit(pass);
 }
 
 void
@@ -212,6 +257,14 @@ magnifier_draw(struct output *output, struct wlr_buffer *output_buffer, struct w
 		goto cleanup;
 	}
 
+	if (rc.mag_invert) {
+		color_filter_apply(output_buffer, &mag_box,
+			color_filter_invert_lightness);
+	}
+	if (rc.mag_cross_hairs) {
+		draw_cross_hairs(output, output_buffer, &mag_box, &cursor_pos);
+	}
+
 	/* And finally mark the extra damage */
 	*damage = damage_box;
 cleanup:
@@ -241,8 +294,7 @@ static void
 enable_magnifier(bool enable)
 {
 	magnify_on = enable;
-	server.scene->WLR_PRIVATE.direct_scanout = enable ? false
-		: server.direct_scanout_enabled;
+	color_filter_update_direct_scanout();
 }
 
 /* Toggles magnification on and off */
@@ -278,6 +330,27 @@ magnifier_set_scale(enum magnify_dir dir)
 		}
 	}
 
+	if (output) {
+		wlr_output_schedule_frame(output->wlr_output);
+	}
+}
+
+void
+magnifier_reconfigure(void)
+{
+	static bool rc_enabled;
+	static float rc_scale;
+
+	if (rc_scale != rc.mag_scale) {
+		rc_scale = rc.mag_scale;
+		mag_scale = rc.mag_scale;
+	}
+	if (rc_enabled != rc.mag_enabled) {
+		rc_enabled = rc.mag_enabled;
+		enable_magnifier(rc.mag_enabled);
+	}
+
+	struct output *output = output_nearest_to_cursor();
 	if (output) {
 		wlr_output_schedule_frame(output->wlr_output);
 	}

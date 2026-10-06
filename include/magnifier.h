@@ -21,5 +21,6 @@ void magnifier_draw(struct output *output, struct wlr_buffer *output_buffer,
 	struct wlr_box *damage);
 bool magnifier_is_enabled(void);
 void magnifier_reset(void);
+void magnifier_reconfigure(void);
 
 #endif /* LABWC_MAGNIFIER_H */

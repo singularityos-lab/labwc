@@ -3,6 +3,7 @@
 #define LABWC_KEYBOARD_H
 
 #include <stdbool.h>
+#include <wayland-server-protocol.h>
 #include <xkbcommon/xkbcommon.h>
 #include "input/input.h"
 
@@ -18,6 +19,8 @@ struct keyboard {
 	bool is_virtual;
 	struct wl_listener modifiers;
 	struct wl_listener key;
+	struct wl_listener accessx_key;
+	bool accessx_swallow;
 	/* key repeat for compositor keybinds */
 	uint32_t keybind_repeat_keycode;
 	int32_t keybind_repeat_rate;
@@ -32,6 +35,10 @@ void keyboard_group_init(struct seat *seat);
 void keyboard_group_finish(struct seat *seat);
 
 void keyboard_setup_handlers(struct keyboard *keyboard);
+void keyboard_setup_accessx(struct keyboard *keyboard);
+void keyboard_inject_key(struct keyboard *keyboard, uint32_t keycode,
+	enum wl_keyboard_key_state state, uint32_t time_msec);
+bool keyboard_key_is_modifier(struct keyboard *keyboard, uint32_t keycode);
 void keyboard_set_numlock(struct wlr_keyboard *keyboard);
 void keyboard_update_layout(struct seat *seat, xkb_layout_index_t layout);
 void keyboard_cancel_keybind_repeat(struct keyboard *keyboard);

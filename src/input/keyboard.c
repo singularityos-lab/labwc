@@ -13,10 +13,12 @@
 #include "config/rcxml.h"
 #include "cycle.h"
 #include "idle.h"
+#include "input/accessx.h"
 #include "input/ime.h"
 #include "input/key-state.h"
 #include "labwc.h"
 #include "menu/menu.h"
+#include "protocols/singularity-key-hold.h"
 #include "session-lock.h"
 #include "view.h"
 #include "workspaces.h"
@@ -495,6 +497,21 @@ handle_cycle_view_key(struct keyinfo *keyinfo)
 	return false;
 }
 
+static bool
+is_super_alone(struct keyinfo *keyinfo)
+{
+	if (keyinfo->modifiers & ~WLR_MODIFIER_LOGO) {
+		return false;
+	}
+	for (int i = 0; i < keyinfo->raw.nr_syms; i++) {
+		if (keyinfo->raw.syms[i] == XKB_KEY_Super_L
+				|| keyinfo->raw.syms[i] == XKB_KEY_Super_R) {
+			return true;
+		}
+	}
+	return false;
+}
+
 static enum lab_key_handled
 handle_compositor_keybindings(struct keyboard *keyboard,
 		struct wlr_keyboard_key_event *event)
@@ -507,6 +524,15 @@ handle_compositor_keybindings(struct keyboard *keyboard,
 		event->state == WL_KEYBOARD_KEY_STATE_PRESSED);
 
 	if (event->state == WL_KEYBOARD_KEY_STATE_RELEASED) {
+		if (singularity_key_hold_release(event->keycode)) {
+			cur_keybind = NULL;
+			if (key_state_corresponding_press_event_was_bound(
+					event->keycode)) {
+				key_state_bound_key_remove(event->keycode);
+				return LAB_KEY_HANDLED_TRUE;
+			}
+			return LAB_KEY_HANDLED_FALSE;
+		}
 		if (cur_keybind && cur_keybind->on_release) {
 			key_state_bound_key_remove(event->keycode);
 			if (locked && !cur_keybind->allow_when_locked) {
@@ -525,6 +551,14 @@ handle_compositor_keybindings(struct keyboard *keyboard,
 		key_state_store_pressed_key_as_bound(event->keycode);
 		return LAB_KEY_HANDLED_TRUE_AND_VT_CHANGED;
 	}
+
+	if (singularity_key_hold_active()) {
+		cur_keybind = NULL;
+		return LAB_KEY_HANDLED_FALSE;
+	}
+	singularity_key_hold_press(event->keycode, !locked
+		&& server.input_mode == LAB_INPUT_STATE_PASSTHROUGH
+		&& is_super_alone(&keyinfo));
 
 	/*
 	 * Ignore labwc keybindings if the session is locked.
@@ -626,12 +660,9 @@ keyboard_cancel_all_keybind_repeats(struct seat *seat)
 }
 
 static void
-handle_key(struct wl_listener *listener, void *data)
+process_key(struct keyboard *keyboard, struct wlr_keyboard_key_event *event)
 {
-	/* This event is raised when a key is pressed or released. */
-	struct keyboard *keyboard = wl_container_of(listener, keyboard, key);
 	struct seat *seat = keyboard->base.seat;
-	struct wlr_keyboard_key_event *event = data;
 	struct wlr_seat *wlr_seat = seat->wlr_seat;
 
 	key_state_indicator_update(seat);
@@ -663,6 +694,64 @@ handle_key(struct wl_listener *listener, void *data)
 		wlr_seat_keyboard_notify_key(wlr_seat, event->time_msec,
 			event->keycode, event->state);
 	}
+}
+
+static void
+handle_key(struct wl_listener *listener, void *data)
+{
+	/* This event is raised when a key is pressed or released. */
+	struct keyboard *keyboard = wl_container_of(listener, keyboard, key);
+	struct wlr_keyboard_key_event *event = data;
+
+	if (keyboard->accessx_swallow) {
+		keyboard->accessx_swallow = false;
+		idle_manager_notify_activity(keyboard->base.seat->wlr_seat);
+		return;
+	}
+	process_key(keyboard, event);
+}
+
+static void
+handle_accessx_key(struct wl_listener *listener, void *data)
+{
+	struct keyboard *keyboard = wl_container_of(listener, keyboard, accessx_key);
+	struct wlr_keyboard_key_event *event = data;
+
+	keyboard->accessx_swallow = accessx_filter_key(keyboard, event);
+	if (keyboard->accessx_swallow) {
+		event->update_state = false;
+	}
+}
+
+void
+keyboard_inject_key(struct keyboard *keyboard, uint32_t keycode,
+		enum wl_keyboard_key_state state, uint32_t time_msec)
+{
+	struct wlr_keyboard *kb = keyboard->wlr_keyboard;
+	struct wlr_keyboard_key_event event = {
+		.time_msec = time_msec,
+		.keycode = keycode,
+		.update_state = true,
+		.state = state,
+	};
+	process_key(keyboard, &event);
+
+	if (!kb->xkb_state) {
+		return;
+	}
+	xkb_state_update_key(kb->xkb_state, keycode + 8,
+		state == WL_KEYBOARD_KEY_STATE_PRESSED ? XKB_KEY_DOWN : XKB_KEY_UP);
+	wlr_keyboard_notify_modifiers(kb,
+		xkb_state_serialize_mods(kb->xkb_state, XKB_STATE_MODS_DEPRESSED),
+		xkb_state_serialize_mods(kb->xkb_state, XKB_STATE_MODS_LATCHED),
+		xkb_state_serialize_mods(kb->xkb_state, XKB_STATE_MODS_LOCKED),
+		xkb_state_serialize_layout(kb->xkb_state, XKB_STATE_LAYOUT_EFFECTIVE));
+}
+
+bool
+keyboard_key_is_modifier(struct keyboard *keyboard, uint32_t keycode)
+{
+	return is_modifier(keyboard->wlr_keyboard, keycode);
 }
 
 void
@@ -825,6 +914,13 @@ keyboard_group_init(struct seat *seat)
 	seat->keyboard_group = wlr_keyboard_group_create();
 	keyboard_configure(seat, &seat->keyboard_group->keyboard,
 		/* is_virtual */ false);
+}
+
+void
+keyboard_setup_accessx(struct keyboard *keyboard)
+{
+	keyboard->accessx_key.notify = handle_accessx_key;
+	wl_signal_add(&keyboard->wlr_keyboard->events.key, &keyboard->accessx_key);
 }
 
 void
