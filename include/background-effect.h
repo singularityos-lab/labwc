@@ -58,4 +58,7 @@ void background_effect_reconfigure(void);
  */
 void background_effect_refresh(void);
 
+void background_effect_set_internal(struct wlr_surface *surface,
+	const pixman_region32_t *region, float strength_scale);
+
 #endif /* LABWC_BACKGROUND_EFFECT_H */

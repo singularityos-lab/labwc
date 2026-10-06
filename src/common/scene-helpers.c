@@ -5,10 +5,10 @@
 #include <wlr/types/wlr_output.h>
 #include <scenefx/types/wlr_scene.h>
 #include <wlr/util/log.h>
+#include "color-filter.h"
 #include "common/mem.h"
 #include "magnifier.h"
 #include "output.h"
-#include "protocols/singularity-blur.h"
 
 struct wlr_surface *
 lab_wlr_surface_from_node(struct wlr_scene_node *node)
@@ -92,6 +92,16 @@ scene_output_damage(struct wlr_scene_output *scene_output,
 	pixman_region32_fini(&clipped);
 }
 
+void
+lab_wlr_scene_output_damage_whole(struct wlr_scene_output *scene_output)
+{
+	pixman_region32_t region;
+	pixman_region32_init_rect(&region, 0, 0,
+		scene_output->output->width, scene_output->output->height);
+	scene_output_damage(scene_output, &region);
+	pixman_region32_fini(&region);
+}
+
 /*
  * This is a copy of wlr_scene_output_commit()
  * as it doesn't use the pending state at all.
@@ -116,7 +126,10 @@ lab_wlr_scene_output_commit(struct wlr_scene_output *scene_output,
 		return true;
 	}
 
-	if (!wlr_scene_output_build_state(scene_output, state, NULL)) {
+	struct wlr_scene_output_state_options options = {
+		.color_transform = output_color_transform(output),
+	};
+	if (!wlr_scene_output_build_state(scene_output, state, &options)) {
 		wlr_log(WLR_ERROR, "Failed to build output state for %s",
 			wlr_output->name);
 		return false;
@@ -133,8 +146,12 @@ lab_wlr_scene_output_commit(struct wlr_scene_output *scene_output,
 		magnifier_draw(output, state->buffer, &additional_damage);
 	}
 
-	if (state->buffer) {
-		singularity_blur_render(output, state->buffer);
+	if (state->buffer && color_filter_active()) {
+		color_filter_draw(state->buffer);
+		additional_damage = (struct wlr_box){
+			.width = state->buffer->width,
+			.height = state->buffer->height,
+		};
 	}
 
 	bool committed = wlr_output_commit_state(wlr_output, state);

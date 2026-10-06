@@ -77,6 +77,8 @@ struct background_effect_surface {
 	 */
 	struct wlr_scene_node *surface_node;
 	struct wl_listener surface_node_destroy;
+
+	float strength_scale;
 };
 
 struct background_effect {
@@ -453,7 +455,8 @@ blur_nodes_update(struct background_effect_surface *surface)
 			continue;
 		}
 		wlr_scene_node_set_position(&blur->node, x, y);
-		wlr_scene_blur_set_strength(blur, rc.blur.strength);
+		wlr_scene_blur_set_strength(blur,
+			rc.blur.strength * surface->strength_scale);
 		/*
 		 * Render below the surface content. Required for the fallback
 		 * tree (the surface node is a sibling there); in
@@ -497,7 +500,9 @@ background_effect_surface_destroy(struct background_effect_surface *surface)
 	pixman_region32_fini(&surface->applied);
 	wlr_surface_synced_finish(&surface->synced);
 	wlr_addon_finish(&surface->addon);
-	wl_resource_set_user_data(surface->resource, NULL);
+	if (surface->resource) {
+		wl_resource_set_user_data(surface->resource, NULL);
+	}
 	free(surface);
 }
 
@@ -669,6 +674,7 @@ manager_handle_get_background_effect(struct wl_client *client,
 		surface, surface_handle_resource_destroy);
 
 	surface->wlr_surface = wlr_surface;
+	surface->strength_scale = 1.0f;
 	wlr_addon_init(&surface->addon, &wlr_surface->addons, NULL,
 		&surface_addon_impl);
 	wl_list_init(&surface->blur_nodes);
@@ -763,7 +769,7 @@ background_effect_reconfigure(void)
 		struct blur_node *blur_node;
 		wl_list_for_each(blur_node, &surface->blur_nodes, link) {
 			wlr_scene_blur_set_strength(blur_node->blur,
-				rc.blur.strength);
+				rc.blur.strength * surface->strength_scale);
 		}
 	}
 
@@ -794,4 +800,47 @@ background_effect_refresh(void)
 	wl_list_for_each(surface, &surfaces, link) {
 		blur_nodes_update(surface);
 	}
+}
+
+void
+background_effect_set_internal(struct wlr_surface *wlr_surface,
+		const pixman_region32_t *region, float strength_scale)
+{
+	struct background_effect_surface *surface =
+		surface_from_wlr_surface(wlr_surface);
+	if (!surface) {
+		if (!region) {
+			return;
+		}
+		surface = calloc(1, sizeof(*surface));
+		if (!surface) {
+			return;
+		}
+		if (!wlr_surface_synced_init(&surface->synced, wlr_surface,
+				&surface_synced_impl, &surface->pending,
+				&surface->current)) {
+			free(surface);
+			return;
+		}
+		surface->wlr_surface = wlr_surface;
+		wlr_addon_init(&surface->addon, &wlr_surface->addons, NULL,
+			&surface_addon_impl);
+		wl_list_init(&surface->blur_nodes);
+		pixman_region32_init(&surface->applied);
+		wl_list_insert(&surfaces, &surface->link);
+	}
+	surface->strength_scale = strength_scale;
+	struct blur_node *blur_node;
+	wl_list_for_each(blur_node, &surface->blur_nodes, link) {
+		wlr_scene_blur_set_strength(blur_node->blur,
+			rc.blur.strength * strength_scale);
+	}
+	if (region) {
+		pixman_region32_copy(&surface->pending.blur_region, region);
+		pixman_region32_copy(&surface->current.blur_region, region);
+	} else {
+		pixman_region32_clear(&surface->pending.blur_region);
+		pixman_region32_clear(&surface->current.blur_region);
+	}
+	blur_nodes_update(surface);
 }

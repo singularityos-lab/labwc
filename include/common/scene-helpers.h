@@ -18,6 +18,7 @@ struct wlr_scene_rect *lab_wlr_scene_rect_create(struct wlr_scene_tree *parent,
 	int width, int height, const float color[static 4]);
 struct wlr_scene_buffer *lab_wlr_scene_buffer_create(
 	struct wlr_scene_tree *parent, struct wlr_buffer *buffer);
+void lab_wlr_scene_output_damage_whole(struct wlr_scene_output *scene_output);
 
 /**
  * lab_get_prev_node - return previous (sibling) node
