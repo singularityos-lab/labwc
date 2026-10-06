@@ -31,6 +31,7 @@
 #include "config/tablet.h"
 #include "config/tablet-tool.h"
 #include "config/touch.h"
+#include "input/tablet-pad.h"
 #include "cycle.h"
 #include "labwc.h"
 #include "regions.h"
@@ -733,13 +734,34 @@ fill_tablet_button_map(xmlNode *node)
 	}
 
 	if (lab_xml_get_string(node, "to", buf, sizeof(buf))) {
-		map_to = mousebind_button_from_str(buf, NULL);
+		map_to = !strcasecmp(buf, "None") ? 0 : mousebind_button_from_str(buf, NULL);
 	} else {
 		wlr_log(WLR_ERROR, "Invalid 'to' argument for tablet button mapping");
 		return;
 	}
 
 	tablet_button_mapping_add(map_from, map_to);
+}
+
+static void
+fill_tablet_padbind(xmlNode *node)
+{
+	char buf[256];
+	if (!lab_xml_get_string(node, "button", buf, sizeof(buf))) {
+		wlr_log(WLR_ERROR, "Missing 'button' argument for tablet pad binding");
+		return;
+	}
+	uint32_t button = tablet_button_from_str(buf);
+	if (button > LAB_BTN_PAD9) {
+		wlr_log(WLR_ERROR, "Invalid pad button for tablet pad binding: %s", buf);
+		return;
+	}
+	struct tablet_padbind *bind = tablet_padbind_create(button);
+	if (lab_xml_get_string(node, "to", buf, sizeof(buf))) {
+		uint32_t to = mousebind_button_from_str(buf, NULL);
+		bind->mouse_button = to == UINT32_MAX ? 0 : to;
+	}
+	append_parsed_actions(node, &bind->actions);
 }
 
 static int
@@ -1176,6 +1198,89 @@ set_hdr_mode(const char *str, enum render_bit_depth *variable)
 }
 
 /* Returns true if the node's children should also be traversed */
+static enum a11y_color_filter
+parse_color_filter(const char *str)
+{
+	if (!strcasecmp(str, "invert") || !strcasecmp(str, "inverted")) {
+		return LAB_A11Y_COLOR_FILTER_INVERT;
+	} else if (!strcasecmp(str, "grayscale")) {
+		return LAB_A11Y_COLOR_FILTER_GRAYSCALE;
+	} else if (!strcasecmp(str, "deuteranopia")) {
+		return LAB_A11Y_COLOR_FILTER_DEUTERANOPIA;
+	} else if (!strcasecmp(str, "protanopia")) {
+		return LAB_A11Y_COLOR_FILTER_PROTANOPIA;
+	} else if (!strcasecmp(str, "tritanopia")) {
+		return LAB_A11Y_COLOR_FILTER_TRITANOPIA;
+	}
+	return LAB_A11Y_COLOR_FILTER_NONE;
+}
+
+static bool
+str_ends_with_animations(const char *nodename)
+{
+	const char *suffix = ".animations";
+	size_t length = strlen(nodename);
+	size_t suffix_length = strlen(suffix);
+	return length > suffix_length
+		&& !strcasecmp(nodename + length - suffix_length, suffix);
+}
+
+static void
+fill_animation(const char *nodename, const char *content)
+{
+	char *name = xstrdup(nodename);
+	char *field = name;
+	char *kind = strchr(name, '.');
+	if (!kind) {
+		free(name);
+		return;
+	}
+	*kind++ = '\0';
+	char *end = strchr(kind, '.');
+	if (end) {
+		*end = '\0';
+	}
+	if (!strcasecmp(kind, "animations")) {
+		if (!strcasecmp(field, "durationScale")) {
+			double scale = atof(content);
+			if (scale >= 0.1 && scale <= 10.0) {
+				rc.motion.duration_scale = scale;
+			}
+		} else if (!strcasecmp(field, "workspaceSpring")) {
+			int spring = motion_spring_from_name(content);
+			if (spring >= 0) {
+				rc.motion.workspace_release_spring = spring;
+			}
+		}
+		free(name);
+		return;
+	}
+	int index = motion_kind_from_name(kind);
+	int spring = motion_spring_from_name(kind);
+	if (index >= 0 && !strcasecmp(field, "duration")) {
+		int ms = atoi(content);
+		if (ms >= 0 && ms <= 10000) {
+			rc.motion.timing[index].duration_ms = ms;
+		}
+	} else if (index >= 0 && !strcasecmp(field, "curve")) {
+		if (!motion_config_set_curve(&rc.motion.timing[index].curve, content)) {
+			wlr_log(WLR_ERROR, "unknown animation curve '%s'", content);
+		}
+	} else if (spring >= 0 && !strcasecmp(field, "damping")) {
+		rc.motion.springs[spring].damping = atof(content);
+	} else if (spring >= 0 && !strcasecmp(field, "stiffness")) {
+		rc.motion.springs[spring].stiffness = atof(content);
+	} else if (spring >= 0 && !strcasecmp(field, "mass")) {
+		double mass = atof(content);
+		if (mass > 0.0) {
+			rc.motion.springs[spring].mass = mass;
+		}
+	} else {
+		wlr_log(WLR_ERROR, "unknown animation setting %s", nodename);
+	}
+	free(name);
+}
+
 static bool
 entry(xmlNode *node, char *nodename, char *content)
 {
@@ -1209,6 +1314,8 @@ entry(xmlNode *node, char *nodename, char *content)
 		fill_font(node);
 	} else if (!strcasecmp(nodename, "map.tablet")) {
 		fill_tablet_button_map(node);
+	} else if (!strcasecmp(nodename, "padbind.tablet")) {
+		fill_tablet_padbind(node);
 
 	/* handle nodes without content, e.g. <keyboard><default /> */
 	} else if (!strcmp(nodename, "default.keyboard")) {
@@ -1259,6 +1366,28 @@ entry(xmlNode *node, char *nodename, char *content)
 		set_bool(content, &rc.primary_selection);
 	} else if (!strcasecmp(nodename, "windowAnimations.core")) {
 		set_bool(content, &rc.window_animations);
+	} else if (str_ends_with_animations(nodename)) {
+		fill_animation(nodename, content);
+	} else if (!strcasecmp(nodename, "enabled.gestures")) {
+		set_bool(content, &rc.gestures_enabled);
+	} else if (!strcasecmp(nodename, "fingers.gestures")) {
+		if (!strcasecmp(content, "both")) {
+			rc.gesture_fingers = (1u << 3) | (1u << 4);
+		} else if (!strcmp(content, "3")) {
+			rc.gesture_fingers = 1u << 3;
+		} else {
+			rc.gesture_fingers = 1u << 4;
+		}
+	} else if (!strcasecmp(nodename, "invert.gestures")) {
+		set_bool(content, &rc.gesture_invert);
+	} else if (!strcasecmp(nodename, "twoDimensional.gestures")) {
+		set_bool(content, &rc.gesture_two_dimensional);
+	} else if (!strcasecmp(nodename, "sensitivity.gestures")) {
+		set_double(content, &rc.gesture_sensitivity);
+		rc.gesture_sensitivity = MAX(0.25, MIN(4.0, rc.gesture_sensitivity));
+	} else if (!strcasecmp(nodename, "threshold.gestures")) {
+		set_double(content, &rc.gesture_threshold);
+		rc.gesture_threshold = MAX(4.0, MIN(64.0, rc.gesture_threshold));
 
 	} else if (!strcasecmp(nodename, "promptCommand.core")) {
 		xstrdup_replace(rc.prompt_command, content);
@@ -1553,6 +1682,9 @@ entry(xmlNode *node, char *nodename, char *content)
 	} else if (!strcasecmp(nodename, "maxPressure.tabletTool")) {
 		rc.tablet_tool.max_pressure =
 			tablet_get_dbl_if_positive(content, "maxPressure");
+	} else if (!strcasecmp(nodename, "pressureCurve.tabletTool")) {
+		rc.tablet_tool.has_pressure_curve = tablet_parse_pressure_curve(
+			content, rc.tablet_tool.pressure_curve);
 	} else if (!strcasecmp(nodename, "ignoreButtonReleasePeriod.menu")) {
 		rc.menu_ignore_button_release_period = atoi(content);
 	} else if (!strcasecmp(nodename, "showIcons.menu")) {
@@ -1569,6 +1701,60 @@ entry(xmlNode *node, char *nodename, char *content)
 		rc.mag_increment = MAX(0, rc.mag_increment);
 	} else if (!strcasecmp(nodename, "useFilter.magnifier")) {
 		set_bool(content, &rc.mag_filter);
+	} else if (!strcasecmp(nodename, "enabled.magnifier")) {
+		set_bool(content, &rc.mag_enabled);
+	} else if (!strcasecmp(nodename, "invert.magnifier")) {
+		set_bool(content, &rc.mag_invert);
+	} else if (!strcasecmp(nodename, "crossHairs.magnifier")) {
+		set_bool(content, &rc.mag_cross_hairs);
+	} else if (!strcasecmp(nodename, "keyboardShortcuts.accessibility")) {
+		set_bool(content, &rc.a11y_keyboard_shortcuts);
+	} else if (!strcasecmp(nodename, "enabled.stickyKeys.accessibility")) {
+		set_bool(content, &rc.sticky_keys);
+	} else if (!strcasecmp(nodename, "twoKeyOff.stickyKeys.accessibility")) {
+		set_bool(content, &rc.sticky_keys_two_key_off);
+	} else if (!strcasecmp(nodename, "modifierBeep.stickyKeys.accessibility")) {
+		set_bool(content, &rc.sticky_keys_modifier_beep);
+	} else if (!strcasecmp(nodename, "enabled.slowKeys.accessibility")) {
+		set_bool(content, &rc.slow_keys);
+	} else if (!strcasecmp(nodename, "delay.slowKeys.accessibility")) {
+		rc.slow_keys_delay = MAX(0, atoi(content));
+	} else if (!strcasecmp(nodename, "enabled.bounceKeys.accessibility")) {
+		set_bool(content, &rc.bounce_keys);
+	} else if (!strcasecmp(nodename, "delay.bounceKeys.accessibility")) {
+		rc.bounce_keys_delay = MAX(0, atoi(content));
+	} else if (!strcasecmp(nodename, "enabled.mouseKeys.accessibility")) {
+		set_bool(content, &rc.mouse_keys);
+	} else if (!strcasecmp(nodename, "maxSpeed.mouseKeys.accessibility")) {
+		rc.mouse_keys_max_speed = MAX(1, atoi(content));
+	} else if (!strcasecmp(nodename, "accelTime.mouseKeys.accessibility")) {
+		rc.mouse_keys_accel_time = MAX(0, atoi(content));
+	} else if (!strcasecmp(nodename, "initDelay.mouseKeys.accessibility")) {
+		rc.mouse_keys_init_delay = MAX(0, atoi(content));
+	} else if (!strcasecmp(nodename, "locatePointer.accessibility")) {
+		set_bool(content, &rc.locate_pointer);
+	} else if (!strcasecmp(nodename, "enabled.secondaryClick.accessibility")) {
+		set_bool(content, &rc.secondary_click);
+	} else if (!strcasecmp(nodename, "time.secondaryClick.accessibility")) {
+		rc.secondary_click_time = MAX(100, atoi(content));
+	} else if (!strcasecmp(nodename, "enabled.dwellClick.accessibility")) {
+		set_bool(content, &rc.dwell_click);
+	} else if (!strcasecmp(nodename, "time.dwellClick.accessibility")) {
+		rc.dwell_time = MAX(100, atoi(content));
+	} else if (!strcasecmp(nodename, "threshold.dwellClick.accessibility")) {
+		rc.dwell_threshold = MAX(1, atoi(content));
+	} else if (!strcasecmp(nodename, "enabled.visualBell.accessibility")) {
+		set_bool(content, &rc.visual_bell);
+	} else if (!strcasecmp(nodename, "type.visualBell.accessibility")) {
+		rc.visual_bell_fullscreen = !strcasecmp(content, "fullscreenFlash");
+	} else if (!strcasecmp(nodename, "toggleKeys.accessibility")) {
+		set_bool(content, &rc.toggle_keys);
+	} else if (!strcasecmp(nodename, "colorFilter.accessibility")) {
+		rc.color_filter = parse_color_filter(content);
+	} else if (!strcasecmp(nodename, "feedbackCommand.accessibility")) {
+		xstrdup_replace(rc.a11y_feedback_command, content);
+	} else if (!strcasecmp(nodename, "privilegedInterfaces")) {
+		rc.allowed_interfaces = 0;
 	} else if (!strcasecmp(nodename, "allow.privilegedInterfaces")) {
 		uint32_t iface_id = parse_privileged_interface(content);
 		if (iface_id) {
@@ -1633,6 +1819,7 @@ rcxml_init(void)
 		wl_list_init(&rc.keybinds);
 		wl_list_init(&rc.mousebinds);
 		wl_list_init(&rc.gesturebinds);
+		wl_list_init(&rc.tablet.padbinds);
 		wl_list_init(&rc.libinput_categories);
 		wl_list_init(&rc.workspace_config.workspaces);
 		wl_list_init(&rc.regions);
@@ -1651,7 +1838,7 @@ rcxml_init(void)
 	rc.show_title = true;
 	rc.title_layout_loaded = false;
 	rc.ssd_keep_border = true;
-	rc.corner_radius = 8;
+	rc.corner_radius = 12;
 	rc.shadows_enabled = false;
 	rc.shadows_on_tiled = false;
 
@@ -1674,7 +1861,14 @@ rcxml_init(void)
 	rc.xwayland_persistence = false;
 	rc.xwayland_native_scaling = false;
 	rc.primary_selection = true;
-	rc.window_animations = false;
+	rc.window_animations = true;
+	motion_config_defaults(&rc.motion);
+	rc.gestures_enabled = true;
+	rc.gesture_fingers = 1u << 4;
+	rc.gesture_invert = false;
+	rc.gesture_two_dimensional = true;
+	rc.gesture_sensitivity = 1.0;
+	rc.gesture_threshold = 16.0;
 
 	init_font_defaults(&rc.font_activewindow);
 	init_font_defaults(&rc.font_inactivewindow);
@@ -1698,6 +1892,7 @@ rcxml_init(void)
 	rc.tablet_tool.relative_motion_sensitivity = 1.0;
 	rc.tablet_tool.min_pressure = 0.0;
 	rc.tablet_tool.max_pressure = 1.0;
+	rc.tablet_tool.has_pressure_curve = false;
 
 	rc.repeat_rate = 25;
 	rc.repeat_delay = 600;
@@ -1740,11 +1935,37 @@ rcxml_init(void)
 	rc.menu_ignore_button_release_period = 250;
 	rc.menu_show_icons = true;
 
+	rc.mag_enabled = false;
 	rc.mag_width = 400;
 	rc.mag_height = 400;
 	rc.mag_scale = 2.0;
 	rc.mag_increment = 0.2;
 	rc.mag_filter = true;
+	rc.mag_invert = false;
+	rc.mag_cross_hairs = false;
+
+	rc.a11y_keyboard_shortcuts = false;
+	rc.sticky_keys = false;
+	rc.sticky_keys_two_key_off = true;
+	rc.sticky_keys_modifier_beep = false;
+	rc.slow_keys = false;
+	rc.slow_keys_delay = 300;
+	rc.bounce_keys = false;
+	rc.bounce_keys_delay = 300;
+	rc.mouse_keys = false;
+	rc.mouse_keys_max_speed = 10;
+	rc.mouse_keys_accel_time = 300;
+	rc.mouse_keys_init_delay = 160;
+	rc.locate_pointer = false;
+	rc.secondary_click = false;
+	rc.secondary_click_time = 1200;
+	rc.dwell_click = false;
+	rc.dwell_time = 1200;
+	rc.dwell_threshold = 10;
+	rc.visual_bell = false;
+	rc.visual_bell_fullscreen = false;
+	rc.toggle_keys = false;
+	rc.color_filter = LAB_A11Y_COLOR_FILTER_NONE;
 }
 
 static void
@@ -2140,6 +2361,17 @@ validate_actions(void)
 		}
 	}
 
+	struct tablet_padbind *padbind;
+	wl_list_for_each(padbind, &rc.tablet.padbinds, link) {
+		wl_list_for_each_safe(action, action_tmp, &padbind->actions, link) {
+			if (!action_is_valid(action)) {
+				wl_list_remove(&action->link);
+				action_free(action);
+				wlr_log(WLR_ERROR, "Removed invalid tablet pad action");
+			}
+		}
+	}
+
 	struct window_rule *rule;
 	wl_list_for_each(rule, &rc.window_rules, link) {
 		wl_list_for_each_safe(action, action_tmp, &rule->actions, link) {
@@ -2261,6 +2493,7 @@ rcxml_finish(void)
 	zfree(rc.font_osd.name);
 	zfree(rc.prompt_command);
 	zfree(rc.error_command);
+	zfree(rc.a11y_feedback_command);
 	zfree(rc.theme_name);
 	zfree(rc.icon_theme_name);
 	zfree(rc.fallback_app_icon_name);
@@ -2297,6 +2530,13 @@ rcxml_finish(void)
 		wl_list_remove(&g->link);
 		action_list_free(&g->actions);
 		zfree(g);
+	}
+
+	struct tablet_padbind *pb, *pb_tmp;
+	wl_list_for_each_safe(pb, pb_tmp, &rc.tablet.padbinds, link) {
+		wl_list_remove(&pb->link);
+		action_list_free(&pb->actions);
+		zfree(pb);
 	}
 
 	struct touch_config_entry *touch_config, *touch_config_tmp;

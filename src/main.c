@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #define _POSIX_C_SOURCE 200809L
 #include <getopt.h>
+#include <limits.h>
 #include <pango/pangocairo.h>
 #include <signal.h>
+#include <string.h>
 #include <unistd.h>
 #include <wlr/version.h>
 #include "common/fd-util.h"
@@ -36,6 +38,7 @@ static const struct option long_options[] = {
 	{"help", no_argument, NULL, 'h'},
 	{"merge-config", no_argument, NULL, 'm'},
 	{"reconfigure", no_argument, NULL, 'r'},
+	{"restart", no_argument, NULL, 'R'},
 	{"startup", required_argument, NULL, 's'},
 	{"session", required_argument, NULL, 'S'},
 	{"title", required_argument, NULL, 't'},
@@ -53,6 +56,7 @@ static const char labwc_usage[] =
 "  -h, --help               Show help message and quit\n"
 "  -m, --merge-config       Merge user config files/theme in all XDG Base Dirs\n"
 "  -r, --reconfigure        Reload the compositor configuration\n"
+"  -R, --restart            Restart the compositor in place, keeping the login session\n"
 "  -s, --startup <command>  Run command on startup\n"
 "  -S, --session <command>  Run command on startup and terminate on exit\n"
 "  -t, --title <fmtstr>     Specify title to use when running in a window\n"
@@ -165,6 +169,38 @@ idle_callback(void *data)
 	}
 }
 
+static char *initial_wayland_display;
+static char *initial_x_display;
+
+static void
+restore_env(const char *name, const char *value)
+{
+	if (value) {
+		setenv(name, value, true);
+	} else {
+		unsetenv(name);
+	}
+}
+
+static void
+restart_in_place(const char *self_path, char *argv[])
+{
+	unsetenv("LABWC_PID");
+	restore_env("WAYLAND_DISPLAY", initial_wayland_display);
+	restore_env("DISPLAY", initial_x_display);
+	sigset_t none;
+	sigemptyset(&none);
+	sigprocmask(SIG_SETMASK, &none, NULL);
+	const char *path = self_path[0] ? self_path : argv[0];
+	wlr_log(WLR_INFO, "restarting %s", path);
+	execv(path, argv);
+	wlr_log_errno(WLR_ERROR, "unable to restart %s", path);
+	if (path != argv[0]) {
+		execvp(argv[0], argv);
+		wlr_log_errno(WLR_ERROR, "unable to restart %s", argv[0]);
+	}
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -178,10 +214,20 @@ main(int argc, char *argv[])
 		wlr_version_get_micro()
 	);
 
+	if (getenv("WAYLAND_DISPLAY")) {
+		initial_wayland_display = strdup(getenv("WAYLAND_DISPLAY"));
+	}
+	if (getenv("DISPLAY")) {
+		initial_x_display = strdup(getenv("DISPLAY"));
+	}
+	char self_path[PATH_MAX] = { 0 };
+	ssize_t self_len = readlink("/proc/self/exe", self_path, sizeof(self_path) - 1);
+	self_path[self_len > 0 ? self_len : 0] = '\0';
+
 	int c;
 	while (1) {
 		int index = 0;
-		c = getopt_long(argc, argv, "c:C:dehmrs:S:t:vV", long_options, &index);
+		c = getopt_long(argc, argv, "c:C:dehmrRs:S:t:vV", long_options, &index);
 		if (c == -1) {
 			break;
 		}
@@ -203,6 +249,9 @@ main(int argc, char *argv[])
 			break;
 		case 'r':
 			send_signal_to_labwc_pid(SIGHUP);
+			exit(0);
+		case 'R':
+			send_signal_to_labwc_pid(SIGUSR1);
 			exit(0);
 		case 's':
 			startup_cmd = optarg;
@@ -300,7 +349,11 @@ main(int argc, char *argv[])
 	rcxml_finish();
 	font_finish();
 
+	bool restart = server.restart_requested;
 	server_finish();
 
+	if (restart) {
+		restart_in_place(self_path, argv);
+	}
 	return 0;
 }

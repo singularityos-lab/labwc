@@ -178,7 +178,7 @@ this is for compatibility with Openbox.
   <hdr>no</hdr>
   <reuseOutputMode>no</reuseOutputMode>
   <xwaylandPersistence>no</xwaylandPersistence>
-  <windowAnimations>no</windowAnimations>
+  <windowAnimations>yes</windowAnimations>
   <primarySelection>yes</primarySelection>
   <promptCommand>[see details below]</promptCommand>
   <errorCommand>[see details below]</errorCommand>
@@ -691,8 +691,42 @@ extending outward from the snapped edge.
 
 *<core><windowAnimations>* [yes|no]
 
-	Animate minimize, restore, maximize and unmaximize transitions. Default is
-	no.
+	Animate opening, closing, minimize, restore, maximize and unmaximize
+	transitions, workspace switches, the snap preview and the boot splash.
+	When a shell announces dock icon rectangles through
+	zsingularity_motion_manager_v1, windows open from, close into and
+	minimize into their icon; otherwise they scale and fade in place.
+	Animations are time based: they last the same at any refresh rate and
+	under load. Set to no for reduced motion. Default is yes.
+
+*<animations><durationScale>* [0.1..10]
+	Multiplies every animation duration. Default is 1.
+
+*<animations><KIND><duration>* [milliseconds]
+*<animations><KIND><curve>* [linear|standard|enter|exit|emphasized]
+	Override the duration or curve of one animation. KIND is one of
+	windowOpen (320, enter), windowOpenFade (140, linear), windowClose
+	(220, exit), minimize (380, standard), restore (320, enter), geometry
+	(320, standard), workspaceSwitch (380, standard), workspaceSettle (140,
+	linear, used after a swipe with animations off), snapPreview (220,
+	linear), splashFade (600, linear) and tilingScroll (220, standard, the
+	slide of the scrolling layout). The defaults follow the Singularity
+	motion tokens.
+
+	Maximizing and unmaximizing crossfade the old window snapshot into the
+	window at its final size, clipped by the growing rectangle, so the new
+	content is never stretched. The snap preview grows from the cursor to
+	its zone with the gentle spring. Swiping past the first or last
+	workspace resists like a rubber band and returns with the bouncy
+	spring.
+
+*<animations><workspaceSpring>* [gentle|snappy|bouncy]
+	Spring used when a workspace swipe is released. It starts with the
+	velocity of the fingers. Default is snappy.
+
+*<animations><SPRING><damping>*, *<stiffness>*, *<mass>*
+	Override a spring. Defaults: gentle 26/170/1, snappy 30/400/1, bouncy
+	14/300/1.
 
 *<theme><font place="">*
 	The font to use for a specific element of a window, menu or OSD.
@@ -1204,6 +1238,34 @@ Note: To rotate touch events with output rotation, use the libinput
 
 	See mouse section above for all supported mouse buttons.
 
+*<tablet><padbind button="" to="" />*
+	A pad binding takes a tablet pad button away from the focused
+	client, even when it understands the tablet protocol. *button* is
+	one of Pad, Pad2..Pad9. With *to* the button clicks that mouse
+	button. With nested *action* elements the actions run when the
+	button is pressed, for example:
+
+	```
+	<padbind button="Pad2">
+	  <action name="Execute" command="notify-send Pad2" />
+	</padbind>
+	```
+
+	Without *to* and actions the button does nothing. Pad buttons without
+	a pad binding keep the behaviour described for *map*.
+
+## TABLET STATE
+
+labwc writes the connected tablets, pads and tools to
+*$XDG_RUNTIME_DIR/labwc/tablets-$WAYLAND_DISPLAY.ini* whenever one of
+them appears or goes away, and removes the file on exit. Each tablet is
+a *[Tablet N]* group with Name, VendorId, ProductId, WidthMm, HeightMm,
+PadButtons, PadRings and PadStrips. A pad that is not part of a tablet
+is a *[Pad N]* group with Name, Buttons, Rings and Strips. Each tool seen
+so far is a *[Tool N]* group with Type, Serial, Pressure, Tilt and
+Buttons (a list of Stylus, Stylus2 and Stylus3). Numbers always use a
+dot as the decimal separator.
+
 ## TABLET TOOL
 
 ```
@@ -1222,6 +1284,13 @@ Note: To rotate touch events with output rotation, use the libinput
 	the speed of the cursor. Using a value lower than 1.0 decreases the
 	speed, using a value greater than 1.0 increases the speed of the
 	cursor. The default is "1.0".
+
+*<tabletTool pressureCurve="x1,y1,x2,y2">*
+	Every pressure value is passed through a cubic Bezier curve from
+	(0,0) to (1,1) with the control points (x1,y1) and (x2,y2), each
+	between 0 and 1. Control points above the diagonal make the pen
+	feel softer, below it firmer. Without this attribute the pressure
+	is not changed.
 
 *<tabletTool minPressure="">*
 *<tabletTool maxPressure="">*

@@ -11,6 +11,7 @@
 #include "common/font.h"
 #include "common/node-type.h"
 #include "config/types.h"
+#include "motion.h"
 
 #define BUTTON_MAP_MAX 16
 
@@ -40,6 +41,15 @@ enum render_bit_depth {
 	LAB_RENDER_BIT_DEPTH_DEFAULT = 0,
 	LAB_RENDER_BIT_DEPTH_8,
 	LAB_RENDER_BIT_DEPTH_10,
+};
+
+enum a11y_color_filter {
+	LAB_A11Y_COLOR_FILTER_NONE = 0,
+	LAB_A11Y_COLOR_FILTER_INVERT,
+	LAB_A11Y_COLOR_FILTER_GRAYSCALE,
+	LAB_A11Y_COLOR_FILTER_DEUTERANOPIA,
+	LAB_A11Y_COLOR_FILTER_PROTANOPIA,
+	LAB_A11Y_COLOR_FILTER_TRITANOPIA,
 };
 
 enum tiling_events_mode {
@@ -88,6 +98,13 @@ struct rcxml {
 	bool xwayland_native_scaling;
 	bool primary_selection;
 	bool window_animations;
+	struct motion_config motion;
+	bool gestures_enabled;
+	uint32_t gesture_fingers;
+	bool gesture_invert;
+	bool gesture_two_dimensional;
+	double gesture_sensitivity;
+	double gesture_threshold;
 	char *prompt_command;
 	char *error_command;
 
@@ -168,12 +185,15 @@ struct rcxml {
 		enum lab_rotation rotation;
 		uint16_t button_map_count;
 		struct button_map_entry button_map[BUTTON_MAP_MAX];
+		struct wl_list padbinds; /* struct tablet_padbind.link */
 	} tablet;
 	struct tablet_tool_config {
 		enum lab_motion motion;
 		double relative_motion_sensitivity;
 		double min_pressure;
 		double max_pressure;
+		bool has_pressure_curve;
+		double pressure_curve[4];
 	} tablet_tool;
 
 	/* libinput */
@@ -236,11 +256,39 @@ struct rcxml {
 	bool menu_show_icons;
 
 	/* Magnifier */
+	bool mag_enabled;
 	int mag_width;
 	int mag_height;
 	float mag_scale;
 	float mag_increment;
 	bool mag_filter;
+	bool mag_invert;
+	bool mag_cross_hairs;
+
+	/* Accessibility */
+	bool a11y_keyboard_shortcuts;
+	bool sticky_keys;
+	bool sticky_keys_two_key_off;
+	bool sticky_keys_modifier_beep;
+	bool slow_keys;
+	int slow_keys_delay;
+	bool bounce_keys;
+	int bounce_keys_delay;
+	bool mouse_keys;
+	int mouse_keys_max_speed;
+	int mouse_keys_accel_time;
+	int mouse_keys_init_delay;
+	bool locate_pointer;
+	bool secondary_click;
+	int secondary_click_time;
+	bool dwell_click;
+	int dwell_time;
+	int dwell_threshold;
+	bool visual_bell;
+	bool visual_bell_fullscreen;
+	bool toggle_keys;
+	enum a11y_color_filter color_filter;
+	char *a11y_feedback_command;
 };
 
 /* defined in main.c */

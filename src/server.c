@@ -2,7 +2,11 @@
 #define _POSIX_C_SOURCE 200809L
 #include "config.h"
 #include <assert.h>
+#include <dirent.h>
+#include <limits.h>
 #include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/wait.h>
 #include <scenefx/render/fx_renderer/fx_renderer.h>
@@ -52,8 +56,11 @@
 	#include <wlr/types/wlr_drm_lease_v1.h>
 #endif
 
+#include "a11y.h"
 #include "action.h"
 #include "background-effect.h"
+#include "common/buf.h"
+#include "output-config.h"
 #include "common/macros.h"
 #include "common/mem.h"
 #include "common/nag.h"
@@ -73,6 +80,9 @@
 #include "output-virtual.h"
 #include "protocols/singularity-tiling.h"
 #include "protocols/singularity-gesture.h"
+#include "protocols/singularity-motion.h"
+#include "protocols/singularity-stage.h"
+#include "protocols/singularity-process.h"
 #include "regions.h"
 #include "resize-indicator.h"
 #include "scaled-buffer/scaled-buffer.h"
@@ -80,8 +90,11 @@
 #include "ssd.h"
 #include "theme.h"
 #include "view.h"
+#include "input/tablet-state.h"
+#include "protocols/singularity-key-hold.h"
 #include "workspaces.h"
 #include "xwayland.h"
+#include "protocols/singularity-snap.h"
 
 void singularity_preview_init(void);
 void singularity_blur_init(void);
@@ -120,16 +133,22 @@ reload_config_and_theme(void)
 	struct view *view;
 	wl_list_for_each(view, &server.views, link) {
 		view_reload_ssd(view);
+		if (view->singularity_scrolling_tiled) {
+			view_notify_tiled(view);
+		}
 	}
 
 	cycle_finish(/*switch_focus*/ false);
 	menu_reconfigure();
 	seat_reconfigure();
 	background_effect_reconfigure();
+	a11y_reconfigure();
 	regions_reconfigure();
 	resize_indicator_reconfigure();
 	kde_server_decoration_update_default();
 	workspaces_reconfigure();
+	output_config_load();
+	output_color_reconfigure();
 #if HAVE_XWAYLAND
 	xwayland_update_scale();
 #endif
@@ -153,6 +172,14 @@ handle_sigterm(int signal, void *data)
 	struct wl_display *display = data;
 
 	wl_display_terminate(display);
+	return 0;
+}
+
+static int
+handle_sigusr1(int signal, void *data)
+{
+	server.restart_requested = true;
+	wl_display_terminate(server.wl_display);
 	return 0;
 }
 
@@ -322,6 +349,78 @@ allow_for_sandbox(const struct wlr_security_context_v1_state *security_state,
 		}
 	}
 	return false;
+}
+
+static bool
+drm_card_is_needed(const char *card)
+{
+	char path[PATH_MAX];
+	snprintf(path, sizeof(path), "/sys/class/drm/%s/device/boot_vga", card);
+	FILE *boot_vga = fopen(path, "r");
+	if (boot_vga) {
+		int flag = fgetc(boot_vga);
+		fclose(boot_vga);
+		if (flag == '1') {
+			return true;
+		}
+	}
+
+	DIR *dir = opendir("/sys/class/drm");
+	if (!dir) {
+		return true;
+	}
+	size_t len = strlen(card);
+	bool has_connector = false;
+	struct dirent *entry;
+	while ((entry = readdir(dir))) {
+		if (!strncmp(entry->d_name, card, len) && entry->d_name[len] == '-') {
+			has_connector = true;
+			break;
+		}
+	}
+	closedir(dir);
+	return has_connector;
+}
+
+/*
+ * A GPU without any display connector (the discrete GPU of most hybrid
+ * laptops) can never drive an output, but opening it for the multi-GPU
+ * renderer keeps it powered. Leave such GPUs to applications that use
+ * them through render offload.
+ */
+static void
+skip_render_only_gpus(void)
+{
+	if (getenv("WLR_DRM_DEVICES")) {
+		return;
+	}
+	DIR *dir = opendir("/sys/class/drm");
+	if (!dir) {
+		return;
+	}
+	struct buf devices = BUF_INIT;
+	int skipped = 0;
+	struct dirent *entry;
+	while ((entry = readdir(dir))) {
+		if (strncmp(entry->d_name, "card", 4) || strchr(entry->d_name, '-')) {
+			continue;
+		}
+		if (!drm_card_is_needed(entry->d_name)) {
+			wlr_log(WLR_INFO, "leaving render-only GPU %s to applications",
+				entry->d_name);
+			skipped++;
+			continue;
+		}
+		if (devices.len) {
+			buf_add_char(&devices, ':');
+		}
+		buf_add_fmt(&devices, "/dev/dri/%s", entry->d_name);
+	}
+	closedir(dir);
+	if (skipped && devices.len) {
+		setenv("WLR_DRM_DEVICES", devices.data, true);
+	}
+	buf_reset(&devices);
 }
 
 static bool
@@ -518,6 +617,8 @@ server_init(void)
 		server.wl_event_loop, SIGTERM, handle_sigterm, server.wl_display);
 	server.sigchld_source = wl_event_loop_add_signal(
 		server.wl_event_loop, SIGCHLD, handle_sigchld, NULL);
+	server.sigusr1_source = wl_event_loop_add_signal(
+		server.wl_event_loop, SIGUSR1, handle_sigusr1, NULL);
 
 	/*
 	 * Prevent wayland clients that request the X11 clipboard but closing
@@ -535,6 +636,7 @@ server_init(void)
 	 * backend based on the current environment, such as opening an x11
 	 * window if an x11 server is running.
 	 */
+	skip_render_only_gpus();
 	server.backend = wlr_backend_autocreate(
 		server.wl_event_loop, &server.session);
 	if (!server.backend) {
@@ -628,6 +730,7 @@ server_init(void)
 	}
 
 	wl_list_init(&server.views);
+	wl_list_init(&server.focus_order);
 	wl_list_init(&server.unmanaged_surfaces);
 	wl_list_init(&server.cycle.views);
 	wl_list_init(&server.cycle.osd_outputs);
@@ -821,8 +924,13 @@ server_init(void)
 
 	singularity_preview_init();
 	singularity_tiling_init();
+	singularity_snap_init();
 	singularity_gesture_init();
 	singularity_blur_init();
+	singularity_key_hold_init();
+	singularity_motion_init();
+	singularity_stage_init();
+	singularity_process_init();
 
 	wlr_alpha_modifier_v1_create(server.wl_display);
 
@@ -866,6 +974,7 @@ server_init(void)
 	server.tablet_manager = wlr_tablet_v2_create(server.wl_display);
 
 	layers_init();
+	a11y_init();
 
 	/* These get cleaned up automatically on display destroy */
 	struct wlr_xdg_foreign_registry *registry =
@@ -892,6 +1001,7 @@ server_start(void)
 		wlr_log_errno(WLR_ERROR, "unable to open wayland socket");
 		exit(EXIT_FAILURE);
 	}
+	tablet_state_set_socket(socket);
 
 	/*
 	 * Start the backend. This will enumerate outputs and inputs, become
@@ -904,17 +1014,20 @@ server_start(void)
 
 	/* Potentially set up the initial fallback output */
 	output_virtual_update_fallback();
+	tablet_state_write(&server.seat);
 
 	if (setenv("WAYLAND_DISPLAY", socket, true) < 0) {
 		wlr_log_errno(WLR_ERROR, "unable to set WAYLAND_DISPLAY");
 	} else {
 		wlr_log(WLR_DEBUG, "WAYLAND_DISPLAY=%s", socket);
 	}
+	output_color_write_state();
 }
 
 void
 server_finish(void)
 {
+	tablet_state_remove();
 #if HAVE_XWAYLAND
 	xwayland_server_finish();
 #endif
@@ -925,11 +1038,13 @@ server_finish(void)
 	wl_event_source_remove(server.sigint_source);
 	wl_event_source_remove(server.sigterm_source);
 	wl_event_source_remove(server.sigchld_source);
+	wl_event_source_remove(server.sigusr1_source);
 
 	wl_display_destroy_clients(server.wl_display);
 
 	nag_finish();
 	seat_finish();
+	a11y_finish();
 	output_finish();
 	xdg_shell_finish();
 	layers_finish();

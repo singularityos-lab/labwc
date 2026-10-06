@@ -16,7 +16,7 @@
     <hdr>no</hdr>
     <reuseOutputMode>no</reuseOutputMode>
     <xwaylandPersistence>no</xwaylandPersistence>
-    <windowAnimations>no</windowAnimations>
+    <windowAnimations>yes</windowAnimations>
     <primarySelection>yes</primarySelection>
     <!--
       # See labwc-config(5) for details
@@ -35,6 +35,14 @@
     <saturation>1.1</saturation>
     <strength>1.0</strength>
   </blur>
+  <animations>
+    <durationScale>1</durationScale>
+    <windowOpen><duration>320</duration><curve>enter</curve></windowOpen>
+    <windowClose><duration>220</duration><curve>exit</curve></windowClose>
+    <minimize><duration>380</duration><curve>standard</curve></minimize>
+    <workspaceSwitch><duration>380</duration><curve>standard</curve></workspaceSwitch>
+    <workspaceSpring>snappy</workspaceSpring>
+  </animations>
 
   <placement>
     <policy>cascade</policy>
@@ -590,6 +598,7 @@
     <map button="Tip" to="Left" />
     <map button="Stylus" to="Right" />
     <map button="Stylus2" to="Middle" />
+    <!-- <padbind button="Pad2" to="Right" /> -->
   </tablet>
 
   <!--
@@ -604,6 +613,7 @@
   -->
   <tabletTool motion="absolute" relativeMotionSensitivity="1.0"
               minPressure="0.0" maxPressure="1.0" />
+  <!-- <tabletTool pressureCurve="0.0,0.3,0.7,1.0" /> -->
 
   <!--
     The *category* attribute is optional and can be set to touch, touchpad,

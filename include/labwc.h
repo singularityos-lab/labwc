@@ -128,6 +128,16 @@ struct seat {
 		enum direction direction;
 		double dx;
 		double dy;
+		bool desktop;
+		double sdx;
+		double sdy;
+		double origin_x;
+		double origin_y;
+		uint32_t history_time[32];
+		double history_dx[32];
+		double history_dy[32];
+		int history_len;
+		int history_next;
 	} swipe;
 	struct wl_listener hold_begin;
 	struct wl_listener hold_end;
@@ -187,6 +197,8 @@ struct server {
 	struct wl_event_source *sigint_source;
 	struct wl_event_source *sigterm_source;
 	struct wl_event_source *sigchld_source;
+	struct wl_event_source *sigusr1_source;
+	bool restart_requested;
 
 	struct wlr_xdg_shell *xdg_shell;
 	struct wlr_xdg_output_manager_v1 *xdg_output_manager;
@@ -220,6 +232,8 @@ struct server {
 
 	/* front to back order */
 	struct wl_list views;
+	/* most recently focused first */
+	struct wl_list focus_order;
 	uint64_t next_view_creation_id;
 	struct wl_list unmanaged_surfaces;
 
@@ -392,6 +406,7 @@ void desktop_focus_view_or_surface(struct seat *seat, struct view *view,
 	struct wlr_surface *surface, bool raise);
 
 void desktop_arrange_all_views(void);
+void desktop_focus_previous_view(struct view *exclude);
 void desktop_focus_output(struct output *output);
 
 /**
