@@ -15,8 +15,10 @@
 #include "config/rcxml.h"
 #include "config/mousebind.h"
 #include "config/tablet.h"
+#include "config/tablet-tool.h"
 #include "input/cursor.h"
 #include "input/tablet-pad.h"
+#include "input/tablet-state.h"
 #include "labwc.h"
 #include "idle.h"
 #include "action.h"
@@ -71,7 +73,9 @@ handle_tablet_tool_destroy(struct wl_listener *listener, void *data)
 	wl_list_remove(&tool->link);
 	wl_list_remove(&tool->handlers.set_cursor.link);
 	wl_list_remove(&tool->handlers.destroy.link);
+	struct seat *seat = tool->seat;
 	free(tool);
+	tablet_state_write(seat);
 }
 
 static struct drawing_tablet_tool *
@@ -97,6 +101,7 @@ tablet_tool_create(struct seat *seat,
 	tool->handlers.destroy.notify = handle_tablet_tool_destroy;
 
 	wl_list_insert(&seat->tablet_tools, &tool->link);
+	tablet_state_write(seat);
 	return tool;
 }
 
@@ -444,7 +449,9 @@ handle_tablet_tool_axis(struct wl_listener *listener, void *data)
 		tool->distance = ev->distance;
 	}
 	if (ev->updated_axes & WLR_TABLET_TOOL_AXIS_PRESSURE) {
-		tool->pressure = ev->pressure;
+		tool->pressure = rc.tablet_tool.has_pressure_curve
+			? tablet_pressure_curve_apply(rc.tablet_tool.pressure_curve, ev->pressure)
+			: ev->pressure;
 	}
 	if (ev->updated_axes & WLR_TABLET_TOOL_AXIS_TILT_X) {
 		tool->tilt_x = ev->tilt_x;
@@ -734,7 +741,9 @@ handle_destroy(struct wl_listener *listener, void *data)
 	tablet_pad_attach_tablet(tablet->seat);
 
 	wl_list_remove(&tablet->handlers.destroy.link);
+	struct seat *seat = tablet->seat;
 	free(tablet);
+	tablet_state_write(seat);
 }
 
 void
@@ -756,6 +765,7 @@ tablet_create(struct seat *seat, struct wlr_input_device *wlr_device)
 
 	wl_list_insert(&seat->tablets, &tablet->link);
 	tablet_pad_attach_tablet(tablet->seat);
+	tablet_state_write(seat);
 }
 
 void

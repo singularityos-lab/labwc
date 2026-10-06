@@ -25,6 +25,7 @@ tests = [
   'accel',
   'buf-simple',
   'gesture',
+  'pressure-curve',
   'str',
   'xml',
 ]
@@ -37,10 +38,13 @@ foreach t : tests
       sources: t == 'gesture' ? [
         '@0@.c'.format(t),
         '../src/config/gesturebind.c',
+      ] : t == 'pressure-curve' ? [
+        '@0@.c'.format(t),
+        '../src/config/tablet-tool.c',
       ] : '@0@.c'.format(t),
       include_directories: [labwc_inc],
       link_with: [test_lib],
-      dependencies: t == 'gesture' ? test_deps + [math] : test_deps,
+      dependencies: t in ['gesture', 'pressure-curve'] ? test_deps + [math] : test_deps,
     ),
     is_parallel: false,
   )

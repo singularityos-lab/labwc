@@ -12,6 +12,8 @@
 #include "config/tablet.h"
 #include "input/cursor.h"
 #include "input/tablet.h"
+#include "input/tablet-state.h"
+#include "action.h"
 #include "labwc.h"
 
 #if WLR_HAS_LIBINPUT_BACKEND
@@ -114,6 +116,21 @@ handle_button(struct wl_listener *listener, void *data)
 		wl_container_of(listener, pad, handlers.button);
 	struct wlr_tablet_pad_button_event *ev = data;
 
+	struct tablet_padbind *bind = tablet_padbind_find(ev->button);
+	if (bind) {
+		if (bind->mouse_button) {
+			cursor_emulate_button(pad->seat, bind->mouse_button,
+				ev->state == WLR_BUTTON_PRESSED
+					? WL_POINTER_BUTTON_STATE_PRESSED
+					: WL_POINTER_BUTTON_STATE_RELEASED,
+				ev->time_msec);
+		} else if (ev->state == WLR_BUTTON_PRESSED
+				&& !wl_list_empty(&bind->actions)) {
+			actions_run(NULL, &bind->actions, NULL);
+		}
+		return;
+	}
+
 	if (!rc.tablet.force_mouse_emulation
 			&& pad->pad_v2 && pad->current_surface) {
 		wlr_tablet_v2_tablet_pad_notify_button(pad->pad_v2, ev->button,
@@ -179,7 +196,9 @@ handle_destroy(struct wl_listener *listener, void *data)
 	wl_list_remove(&pad->handlers.ring.link);
 	wl_list_remove(&pad->handlers.strip.link);
 	wl_list_remove(&pad->handlers.destroy.link);
+	struct seat *seat = pad->seat;
 	free(pad);
+	tablet_state_write(seat);
 }
 
 void
@@ -205,4 +224,5 @@ tablet_pad_create(struct seat *seat, struct wlr_input_device *wlr_device)
 	CONNECT_SIGNAL(wlr_device, &pad->handlers, destroy);
 	wl_list_insert(&seat->tablet_pads, &pad->link);
 	tablet_pad_attach_tablet(pad->seat);
+	tablet_state_write(seat);
 }

@@ -5,6 +5,8 @@
 #include <stdint.h>
 #include <strings.h>
 #include <wlr/util/log.h>
+#include "common/list.h"
+#include "common/mem.h"
 #include "common/parse-double.h"
 #include "config/rcxml.h"
 #include "input/tablet-pad.h"
@@ -149,4 +151,31 @@ tablet_get_mapped_button(uint32_t src_button)
 	}
 	wlr_log(WLR_DEBUG, "no button map target for 0x%x", src_button);
 	return 0;
+}
+
+struct tablet_padbind *
+tablet_padbind_create(uint32_t button)
+{
+	struct tablet_padbind *bind = tablet_padbind_find(button);
+	if (bind) {
+		return bind;
+	}
+	wlr_log(WLR_INFO, "Adding tablet pad binding for pad button %u", button + 1);
+	bind = znew(*bind);
+	bind->button = button;
+	wl_list_init(&bind->actions);
+	wl_list_append(&rc.tablet.padbinds, &bind->link);
+	return bind;
+}
+
+struct tablet_padbind *
+tablet_padbind_find(uint32_t button)
+{
+	struct tablet_padbind *bind;
+	wl_list_for_each(bind, &rc.tablet.padbinds, link) {
+		if (bind->button == button) {
+			return bind;
+		}
+	}
+	return NULL;
 }
