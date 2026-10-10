@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "view-animation.h"
 #include <assert.h>
+#include <drm_fourcc.h>
 #include <math.h>
 #include <wlr/render/allocator.h>
+#include <wlr/render/drm_format_set.h>
 #include <wlr/types/wlr_compositor.h>
-#include <wlr/render/swapchain.h>
 #include <wlr/render/wlr_texture.h>
 #include <wlr/types/wlr_buffer.h>
 #include <scenefx/types/wlr_scene.h>
@@ -137,9 +138,23 @@ render_view_snapshot(struct view *view,
 		struct wlr_color_transform *color_transform, bool include_unmapped)
 {
 	struct wlr_box box = ssd_max_extents(view);
+	const struct wlr_drm_format_set *formats =
+		wlr_renderer_get_texture_formats(server.renderer,
+			server.allocator->buffer_caps);
+	if (!formats) {
+		return NULL;
+	}
+	/* Output formats can be opaque; snapshots need transparent margins. */
+	const struct wlr_drm_format *format =
+		wlr_drm_format_set_get(formats, DRM_FORMAT_ARGB8888);
+	if (!format) {
+		format = wlr_drm_format_set_get(formats, DRM_FORMAT_ABGR8888);
+	}
+	if (!format) {
+		return NULL;
+	}
 	struct wlr_buffer *buffer = wlr_allocator_create_buffer(server.allocator,
-		box.width, box.height,
-		&view->output->wlr_output->swapchain->format);
+		box.width, box.height, format);
 	if (!buffer) {
 		return NULL;
 	}
@@ -152,6 +167,11 @@ render_view_snapshot(struct view *view,
 		wlr_buffer_drop(buffer);
 		return NULL;
 	}
+	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
+		.box = { .width = box.width, .height = box.height },
+		.color = {0},
+		.blend_mode = WLR_RENDER_BLEND_MODE_NONE,
+	});
 	struct wl_array textures;
 	wl_array_init(&textures);
 	struct wlr_scene_node *force_node = include_unmapped && view->content_tree
