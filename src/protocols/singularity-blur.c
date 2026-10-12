@@ -10,14 +10,17 @@
 #include "labwc.h"
 #include "singularity-blur-unstable-v1-protocol.h"
 
-#define SINGULARITY_BLUR_VERSION 3
+#define SINGULARITY_BLUR_VERSION 5
 #define GLASS_STRENGTH_SCALE 0.6f
+#define LIQUID_STRENGTH_SCALE 0.3f
+#define LIQUID_BEZEL 18.0f
 
 struct blur_state {
 	uint32_t mode;
 	bool whole_surface;
 	pixman_region32_t region;
 	uint32_t strength;
+	uint32_t corner_radius;
 };
 
 struct singularity_blur_entry {
@@ -30,10 +33,24 @@ struct singularity_blur_entry {
 static struct wl_global *blur_global;
 
 static void
+entry_set_effect(struct singularity_blur_entry *entry,
+		const pixman_region32_t *region, float strength_scale,
+		float liquid, int corner_radius)
+{
+	if (wl_resource_get_version(entry->resource) >= 4) {
+		background_effect_set_internal_pending(entry->surface, region,
+			strength_scale, liquid, corner_radius);
+	} else {
+		background_effect_set_internal(entry->surface, region,
+			strength_scale, liquid, corner_radius);
+	}
+}
+
+static void
 entry_clear_effect(struct singularity_blur_entry *entry)
 {
 	if (entry->surface) {
-		background_effect_set_internal(entry->surface, NULL, 1.0f);
+		entry_set_effect(entry, NULL, 1.0f, 0.0f, 0);
 	}
 }
 
@@ -114,6 +131,16 @@ blur_handle_set_strength(struct wl_client *client, struct wl_resource *resource,
 }
 
 static void
+blur_handle_set_corner_radius(struct wl_client *client,
+		struct wl_resource *resource, uint32_t radius)
+{
+	struct singularity_blur_entry *entry = wl_resource_get_user_data(resource);
+	if (entry) {
+		entry->pending.corner_radius = radius > 512 ? 512 : radius;
+	}
+}
+
+static void
 blur_handle_commit(struct wl_client *client, struct wl_resource *resource)
 {
 	struct singularity_blur_entry *entry = wl_resource_get_user_data(resource);
@@ -127,8 +154,12 @@ blur_handle_commit(struct wl_client *client, struct wl_resource *resource)
 		return;
 	}
 	float scale = state->strength / 100.0f;
+	float liquid = 0.0f;
 	if (state->mode == ZSINGULARITY_BLUR_V1_MODE_GLASS) {
 		scale *= GLASS_STRENGTH_SCALE;
+	} else if (state->mode == ZSINGULARITY_BLUR_V1_MODE_LIQUID) {
+		scale *= LIQUID_STRENGTH_SCALE;
+		liquid = LIQUID_BEZEL;
 	}
 	pixman_region32_t region;
 	if (state->whole_surface) {
@@ -137,7 +168,8 @@ blur_handle_commit(struct wl_client *client, struct wl_resource *resource)
 		pixman_region32_init(&region);
 		pixman_region32_copy(&region, &state->region);
 	}
-	background_effect_set_internal(entry->surface, &region, scale);
+	entry_set_effect(entry, &region, scale, liquid,
+		state->corner_radius);
 	pixman_region32_fini(&region);
 }
 
@@ -149,6 +181,7 @@ static const struct zsingularity_blur_v1_interface blur_impl = {
 	.set_mode = blur_handle_set_mode,
 	.set_region = blur_handle_set_region,
 	.set_strength = blur_handle_set_strength,
+	.set_corner_radius = blur_handle_set_corner_radius,
 };
 
 static void

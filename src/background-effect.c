@@ -69,6 +69,8 @@ struct background_effect_surface {
 	 * check below.
 	 */
 	bool applied_compensate;
+	float applied_liquid;
+	int applied_radius;
 
 	/*
 	 * Scene-node rendering wlr_surface, cached to avoid searching the
@@ -78,7 +80,6 @@ struct background_effect_surface {
 	struct wlr_scene_node *surface_node;
 	struct wl_listener surface_node_destroy;
 
-	float strength_scale;
 };
 
 struct background_effect {
@@ -322,6 +323,67 @@ handle_surface_node_destroy(struct wl_listener *listener, void *data)
 	blur_nodes_destroy(surface);
 }
 
+static int
+component_root(int *parent, int i)
+{
+	while (parent[i] != i) {
+		parent[i] = parent[parent[i]];
+		i = parent[i];
+	}
+	return i;
+}
+
+static bool
+boxes_touch(const pixman_box32_t *a, const pixman_box32_t *b)
+{
+	return a->x1 <= b->x2 && b->x1 <= a->x2
+		&& a->y1 <= b->y2 && b->y1 <= a->y2
+		&& ((a->x1 < b->x2 && b->x1 < a->x2)
+			|| (a->y1 < b->y2 && b->y1 < a->y2));
+}
+
+static pixman_box32_t *
+region_components(pixman_region32_t *region, int *count)
+{
+	int n_rects;
+	const pixman_box32_t *rects =
+		pixman_region32_rectangles(region, &n_rects);
+	*count = 0;
+	if (n_rects == 0) {
+		return NULL;
+	}
+	int *parent = znew_n(int, n_rects);
+	pixman_box32_t *boxes = znew_n(pixman_box32_t, n_rects);
+	for (int i = 0; i < n_rects; i++) {
+		parent[i] = i;
+	}
+	for (int i = 0; i < n_rects; i++) {
+		for (int j = i + 1; j < n_rects; j++) {
+			if (boxes_touch(&rects[i], &rects[j])) {
+				parent[component_root(parent, j)] =
+					component_root(parent, i);
+			}
+		}
+	}
+	for (int i = 0; i < n_rects; i++) {
+		if (component_root(parent, i) != i) {
+			continue;
+		}
+		pixman_box32_t box = rects[i];
+		for (int j = 0; j < n_rects; j++) {
+			if (j != i && component_root(parent, j) == i) {
+				box.x1 = MIN(box.x1, rects[j].x1);
+				box.y1 = MIN(box.y1, rects[j].y1);
+				box.x2 = MAX(box.x2, rects[j].x2);
+				box.y2 = MAX(box.y2, rects[j].y2);
+			}
+		}
+		boxes[(*count)++] = box;
+	}
+	free(parent);
+	return boxes;
+}
+
 /*
  * Create/destroy wlr_scene_blur nodes so that they match the committed
  * blur region of the surface.
@@ -330,6 +392,11 @@ static void
 blur_nodes_update(struct background_effect_surface *surface)
 {
 	struct background_effect_surface_state *state = &surface->current;
+	struct blur_node *blur_node;
+	wl_list_for_each(blur_node, &surface->blur_nodes, link) {
+		wlr_scene_blur_set_strength(blur_node->blur,
+			rc.blur.strength * state->strength_scale);
+	}
 	int surface_width = surface->wlr_surface->current.width;
 	int surface_height = surface->wlr_surface->current.height;
 	pixman_region32_t region;
@@ -418,6 +485,8 @@ blur_nodes_update(struct background_effect_surface *surface)
 			&& surface->applied_x == offset_x
 			&& surface->applied_y == offset_y
 			&& surface->applied_compensate == compensate
+			&& surface->applied_liquid == state->liquid
+			&& surface->applied_radius == state->corner_radius
 			&& pixman_region32_equal(&surface->applied, &region)) {
 		/* Nothing changed */
 		pixman_region32_fini(&region);
@@ -435,13 +504,19 @@ blur_nodes_update(struct background_effect_surface *surface)
 	pixman_region32_t node_region;
 	pixman_region32_init(&node_region);
 	pixman_region32_copy(&node_region, &region);
-	if (compensate) {
+	if (compensate && state->liquid <= 0.0f) {
 		blur_region_compensate(&node_region);
 	}
 
 	int n_rects;
-	const pixman_box32_t *rects =
-		pixman_region32_rectangles(&node_region, &n_rects);
+	pixman_box32_t *shapes = NULL;
+	const pixman_box32_t *rects;
+	if (state->liquid > 0.0f) {
+		shapes = region_components(&node_region, &n_rects);
+		rects = shapes;
+	} else {
+		rects = pixman_region32_rectangles(&node_region, &n_rects);
+	}
 	for (int i = 0; i < n_rects; i++) {
 		int x = offset_x + rects[i].x1;
 		int y = offset_y + rects[i].y1;
@@ -456,7 +531,11 @@ blur_nodes_update(struct background_effect_surface *surface)
 		}
 		wlr_scene_node_set_position(&blur->node, x, y);
 		wlr_scene_blur_set_strength(blur,
-			rc.blur.strength * surface->strength_scale);
+			rc.blur.strength * surface->current.strength_scale);
+		if (state->liquid > 0.0f) {
+			wlr_scene_blur_set_corner_radius(blur, state->corner_radius);
+			wlr_scene_blur_set_liquid(blur, state->liquid);
+		}
 		/*
 		 * Render below the surface content. Required for the fallback
 		 * tree (the surface node is a sibling there); in
@@ -472,7 +551,10 @@ blur_nodes_update(struct background_effect_surface *surface)
 		wl_list_insert(&surface->blur_nodes, &blur_node->link);
 	}
 
+	free(shapes);
 	pixman_region32_copy(&surface->applied, &region);
+	surface->applied_liquid = state->liquid;
+	surface->applied_radius = state->corner_radius;
 	surface->applied_tree = tree;
 	surface->applied_x = offset_x;
 	surface->applied_y = offset_y;
@@ -553,6 +635,9 @@ surface_synced_init_state(void *_state)
 {
 	struct background_effect_surface_state *state = _state;
 	pixman_region32_init(&state->blur_region);
+	state->strength_scale = 1.0f;
+	state->liquid = 0.0f;
+	state->corner_radius = 0;
 }
 
 static void
@@ -568,6 +653,9 @@ surface_synced_move_state(void *_dst, void *_src)
 	struct background_effect_surface_state *dst = _dst;
 	struct background_effect_surface_state *src = _src;
 	pixman_region32_copy(&dst->blur_region, &src->blur_region);
+	dst->strength_scale = src->strength_scale;
+	dst->liquid = src->liquid;
+	dst->corner_radius = src->corner_radius;
 }
 
 static void
@@ -674,7 +762,6 @@ manager_handle_get_background_effect(struct wl_client *client,
 		surface, surface_handle_resource_destroy);
 
 	surface->wlr_surface = wlr_surface;
-	surface->strength_scale = 1.0f;
 	wlr_addon_init(&surface->addon, &wlr_surface->addons, NULL,
 		&surface_addon_impl);
 	wl_list_init(&surface->blur_nodes);
@@ -769,7 +856,7 @@ background_effect_reconfigure(void)
 		struct blur_node *blur_node;
 		wl_list_for_each(blur_node, &surface->blur_nodes, link) {
 			wlr_scene_blur_set_strength(blur_node->blur,
-				rc.blur.strength * surface->strength_scale);
+				rc.blur.strength * surface->current.strength_scale);
 		}
 	}
 
@@ -802,25 +889,25 @@ background_effect_refresh(void)
 	}
 }
 
-void
-background_effect_set_internal(struct wlr_surface *wlr_surface,
-		const pixman_region32_t *region, float strength_scale)
+static struct background_effect_surface *
+get_internal_surface(struct wlr_surface *wlr_surface,
+		const pixman_region32_t *region)
 {
 	struct background_effect_surface *surface =
 		surface_from_wlr_surface(wlr_surface);
 	if (!surface) {
 		if (!region) {
-			return;
+			return NULL;
 		}
 		surface = calloc(1, sizeof(*surface));
 		if (!surface) {
-			return;
+			return NULL;
 		}
 		if (!wlr_surface_synced_init(&surface->synced, wlr_surface,
 				&surface_synced_impl, &surface->pending,
 				&surface->current)) {
 			free(surface);
-			return;
+			return NULL;
 		}
 		surface->wlr_surface = wlr_surface;
 		wlr_addon_init(&surface->addon, &wlr_surface->addons, NULL,
@@ -829,18 +916,41 @@ background_effect_set_internal(struct wlr_surface *wlr_surface,
 		pixman_region32_init(&surface->applied);
 		wl_list_insert(&surfaces, &surface->link);
 	}
-	surface->strength_scale = strength_scale;
-	struct blur_node *blur_node;
-	wl_list_for_each(blur_node, &surface->blur_nodes, link) {
-		wlr_scene_blur_set_strength(blur_node->blur,
-			rc.blur.strength * strength_scale);
+	return surface;
+}
+
+void
+background_effect_set_internal_pending(struct wlr_surface *wlr_surface,
+		const pixman_region32_t *region, float strength_scale, float liquid,
+		int corner_radius)
+{
+	struct background_effect_surface *surface =
+		get_internal_surface(wlr_surface, region);
+	if (!surface) {
+		return;
 	}
+	surface->pending.strength_scale = strength_scale;
+	surface->pending.liquid = liquid;
+	surface->pending.corner_radius = corner_radius;
 	if (region) {
 		pixman_region32_copy(&surface->pending.blur_region, region);
-		pixman_region32_copy(&surface->current.blur_region, region);
 	} else {
 		pixman_region32_clear(&surface->pending.blur_region);
-		pixman_region32_clear(&surface->current.blur_region);
 	}
+}
+
+void
+background_effect_set_internal(struct wlr_surface *wlr_surface,
+		const pixman_region32_t *region, float strength_scale, float liquid,
+		int corner_radius)
+{
+	background_effect_set_internal_pending(wlr_surface, region,
+		strength_scale, liquid, corner_radius);
+	struct background_effect_surface *surface =
+		surface_from_wlr_surface(wlr_surface);
+	if (!surface) {
+		return;
+	}
+	surface_synced_move_state(&surface->current, &surface->pending);
 	blur_nodes_update(surface);
 }

@@ -17,6 +17,9 @@ struct wlr_surface;
  */
 struct background_effect_surface_state {
 	pixman_region32_t blur_region;
+	float strength_scale;
+	float liquid;
+	int corner_radius;
 };
 
 struct background_effect;
@@ -59,6 +62,11 @@ void background_effect_reconfigure(void);
 void background_effect_refresh(void);
 
 void background_effect_set_internal(struct wlr_surface *surface,
-	const pixman_region32_t *region, float strength_scale);
+	const pixman_region32_t *region, float strength_scale, float liquid,
+	int corner_radius);
+
+void background_effect_set_internal_pending(struct wlr_surface *surface,
+	const pixman_region32_t *region, float strength_scale, float liquid,
+	int corner_radius);
 
 #endif /* LABWC_BACKGROUND_EFFECT_H */

@@ -1,0 +1,305 @@
+diff --git a/include/render/fx_renderer/fx_renderer.h b/include/render/fx_renderer/fx_renderer.h
+index ba6cc4b..640f700 100644
+--- a/include/render/fx_renderer/fx_renderer.h
++++ b/include/render/fx_renderer/fx_renderer.h
+@@ -203,6 +203,7 @@ struct fx_renderer {
+ 		struct blur_shader blur1;
+ 		struct blur_shader blur2;
+ 		struct blur_effects_shader blur_effects;
++		struct liquid_shader liquid;
+ 	} shaders;
+ 
+ 	struct wl_list buffers; // fx_framebuffer.link
+diff --git a/include/render/fx_renderer/shaders.h b/include/render/fx_renderer/shaders.h
+index f3a2bd5..d3261b0 100644
+--- a/include/render/fx_renderer/shaders.h
++++ b/include/render/fx_renderer/shaders.h
+@@ -176,4 +176,19 @@ struct blur_effects_shader {
+ 
+ bool link_blur_effects_program(struct blur_effects_shader *shader);
+ 
++struct liquid_shader {
++	GLuint program;
++	GLint proj;
++	GLint tex_proj;
++	GLint tex;
++	GLint pos_attrib;
++	GLint uv_box;
++	GLint size;
++	GLint radius;
++	GLint bezel;
++	GLint alpha;
++};
++
++bool link_liquid_program(struct liquid_shader *shader);
++
+ #endif
+diff --git a/include/scenefx/render/pass.h b/include/scenefx/render/pass.h
+index 0ef3750..f835ef8 100644
+--- a/include/scenefx/render/pass.h
++++ b/include/scenefx/render/pass.h
+@@ -89,6 +89,7 @@ struct fx_render_blur_pass_options {
+ 	bool use_optimized_blur;
+ 	bool ignore_transparent;
+ 	float blur_strength;
++	float liquid;
+ 	struct fx_corner_fradii corners;
+ 	struct clipped_fregion clipped_region;
+ };
+diff --git a/include/scenefx/types/wlr_scene.h b/include/scenefx/types/wlr_scene.h
+index ac1bc49..1816c07 100644
+--- a/include/scenefx/types/wlr_scene.h
++++ b/include/scenefx/types/wlr_scene.h
+@@ -178,6 +178,7 @@ struct wlr_scene_blur {
+ 
+ 	float strength;
+ 	float alpha;
++	float liquid;
+ 
+ 	bool should_only_blur_bottom_layer;
+ 
+@@ -670,6 +671,8 @@ void wlr_scene_blur_set_alpha(struct wlr_scene_blur *blur, float alpha);
+  */
+ void wlr_scene_blur_set_strength(struct wlr_scene_blur *blur, float strength);
+ 
++void wlr_scene_blur_set_liquid(struct wlr_scene_blur *blur, float liquid);
++
+ /**
+  * Sets the region where to clip the blur.
+  *
+diff --git a/render/fx_renderer/fx_pass.c b/render/fx_renderer/fx_pass.c
+index 39b6226..f3208b3 100644
+--- a/render/fx_renderer/fx_pass.c
++++ b/render/fx_renderer/fx_pass.c
+@@ -1098,6 +1098,52 @@ static struct fx_framebuffer *get_main_buffer_blur(struct fx_gles_render_pass *p
+ 	return fx_options->current_buffer;
+ }
+ 
++static void render_liquid(struct fx_gles_render_pass *pass,
++		struct fx_texture *texture, struct fx_render_blur_pass_options *fx_options) {
++	struct fx_render_texture_options *tex_options = &fx_options->tex_options;
++	struct fx_renderer *renderer = pass->buffer->renderer;
++	struct liquid_shader shader = renderer->shaders.liquid;
++	const struct wlr_box *box = tex_options->clip_box;
++	if (!box || box->width <= 0 || box->height <= 0) {
++		return;
++	}
++
++	struct fx_corner_fradii corners = tex_options->corners;
++	float radius = fmaxf(fmaxf(corners.top_left, corners.top_right),
++		fmaxf(corners.bottom_left, corners.bottom_right));
++	struct wlr_fbox src_fbox = {
++		.x = (double)box->x / texture->wlr_texture.width,
++		.y = (double)box->y / texture->wlr_texture.height,
++		.width = (double)box->width / texture->wlr_texture.width,
++		.height = (double)box->height / texture->wlr_texture.height,
++	};
++
++	push_fx_debug(renderer);
++	setup_blending(WLR_RENDER_BLEND_MODE_PREMULTIPLIED);
++	glUseProgram(shader.program);
++
++	glActiveTexture(GL_TEXTURE0);
++	glBindTexture(texture->target, texture->tex);
++	glTexParameteri(texture->target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
++	glTexParameteri(texture->target, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
++
++	glUniform1i(shader.tex, 0);
++	glUniform4f(shader.uv_box, src_fbox.x, src_fbox.y,
++		src_fbox.width, src_fbox.height);
++	glUniform2f(shader.size, box->width, box->height);
++	glUniform1f(shader.radius, radius);
++	glUniform1f(shader.bezel, fx_options->liquid);
++	glUniform1f(shader.alpha, tex_options->base.alpha ? *tex_options->base.alpha : 1.0f);
++
++	set_proj_matrix(shader.proj, pass->projection_matrix, box);
++	set_tex_matrix(shader.tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &src_fbox);
++
++	render(box, tex_options->base.clip, shader.pos_attrib);
++
++	glBindTexture(texture->target, 0);
++	pop_fx_debug(renderer);
++}
++
+ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
+ 		struct fx_render_blur_pass_options *fx_options) {
+ 	if (pass->fx_offscreen_buffers == NULL) {
+@@ -1147,6 +1193,11 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
+ 		stencil_mask_close(true);
+ 	}
+ 
++	if (fx_options->liquid > 0.0f) {
++		render_liquid(pass, blur_texture, fx_options);
++		goto destroy;
++	}
++
+ 	// Draw the blurred texture
+ 	tex_options->base.dst_box = (struct wlr_box) {
+ 		.x = 0,
+@@ -1166,6 +1217,7 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
+ 	tex_options->clipped_region = fx_options->clipped_region;
+ 	fx_render_pass_add_texture(pass, tex_options);
+ 
++destroy:
+ 	wlr_texture_destroy(&blur_texture->wlr_texture);
+ 
+ 	// Finish stenciling
+diff --git a/render/fx_renderer/fx_renderer.c b/render/fx_renderer/fx_renderer.c
+index 8d0a7b2..628af26 100644
+--- a/render/fx_renderer/fx_renderer.c
++++ b/render/fx_renderer/fx_renderer.c
+@@ -98,6 +98,7 @@ static inline void free_shaders(struct fx_renderer *renderer) {
+ 	glDeleteProgram(renderer->shaders.blur1.program);
+ 	glDeleteProgram(renderer->shaders.blur2.program);
+ 	glDeleteProgram(renderer->shaders.blur_effects.program);
++	glDeleteProgram(renderer->shaders.liquid.program);
+ 	pop_fx_debug(renderer);
+ }
+ 
+@@ -436,6 +437,10 @@ static bool link_shaders(struct fx_renderer *renderer) {
+ 		wlr_log(WLR_ERROR, "Could not link blur_effects shader");
+ 		goto error;
+ 	}
++	if (!link_liquid_program(&renderer->shaders.liquid)) {
++		wlr_log(WLR_ERROR, "Could not link liquid shader");
++		goto error;
++	}
+ 
+ 	return true;
+ 
+diff --git a/render/fx_renderer/shaders.c b/render/fx_renderer/shaders.c
+index 51cfe90..38aa8b9 100644
+--- a/render/fx_renderer/shaders.c
++++ b/render/fx_renderer/shaders.c
+@@ -20,6 +20,7 @@
+ #include "blur1_frag_src.h"
+ #include "blur2_frag_src.h"
+ #include "blur_effects_frag_src.h"
++#include "liquid_frag_src.h"
+ 
+ GLuint compile_shader(GLuint type, const GLchar *src) {
+ 	GLuint shader = glCreateShader(type);
+@@ -359,3 +360,22 @@ bool link_blur_effects_program(struct blur_effects_shader *shader) {
+ 
+ 	return true;
+ }
++
++bool link_liquid_program(struct liquid_shader *shader) {
++	GLuint prog;
++	shader->program = prog = link_program(liquid_frag_src);
++	if (!shader->program) {
++		return false;
++	}
++	shader->proj = glGetUniformLocation(prog, "proj");
++	shader->tex = glGetUniformLocation(prog, "tex");
++	shader->pos_attrib = glGetAttribLocation(prog, "pos");
++	shader->tex_proj = glGetUniformLocation(prog, "tex_proj");
++	shader->uv_box = glGetUniformLocation(prog, "uv_box");
++	shader->size = glGetUniformLocation(prog, "size");
++	shader->radius = glGetUniformLocation(prog, "radius");
++	shader->bezel = glGetUniformLocation(prog, "bezel");
++	shader->alpha = glGetUniformLocation(prog, "alpha");
++
++	return true;
++}
+diff --git a/render/fx_renderer/shaders/liquid.frag b/render/fx_renderer/shaders/liquid.frag
+new file mode 100644
+index 0000000..edc52b9
+--- /dev/null
++++ b/render/fx_renderer/shaders/liquid.frag
+@@ -0,0 +1,55 @@
++#ifdef GL_FRAGMENT_PRECISION_HIGH
++precision highp float;
++#else
++precision mediump float;
++#endif
++
++varying vec2 v_texcoord;
++uniform sampler2D tex;
++
++uniform vec4 uv_box;
++uniform vec2 size;
++uniform float radius;
++uniform float bezel;
++uniform float alpha;
++
++float box_distance(vec2 p, vec2 half_size, float r) {
++	vec2 q = abs(p) - half_size + r;
++	return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
++}
++
++void main() {
++	vec2 half_size = size * 0.5;
++	vec2 p = (v_texcoord - uv_box.xy) / uv_box.zw * size - half_size;
++	float r = min(radius, min(half_size.x, half_size.y));
++	float d = box_distance(p, half_size, r);
++	float coverage = clamp(0.5 - d, 0.0, 1.0);
++	if (coverage <= 0.0) {
++		discard;
++	}
++
++	vec2 e = vec2(0.5, 0.0);
++	vec2 normal = vec2(
++		box_distance(p + e.xy, half_size, r) - box_distance(p - e.xy, half_size, r),
++		box_distance(p + e.yx, half_size, r) - box_distance(p - e.yx, half_size, r));
++	float normal_length = length(normal);
++	normal = normal_length > 0.0 ? normal / normal_length : vec2(0.0);
++
++	float width = min(bezel, min(half_size.x, half_size.y));
++	float rim = clamp(1.0 + d / max(width, 1.0), 0.0, 1.0);
++	float bend = 1.0 - sqrt(1.0 - rim * rim);
++	vec2 offset = -normal * bend * width / size * uv_box.zw;
++
++	vec3 color = vec3(
++		texture2D(tex, v_texcoord + offset * 1.06).r,
++		texture2D(tex, v_texcoord + offset).g,
++		texture2D(tex, v_texcoord + offset * 0.94).b);
++
++	float edge = 1.0 - smoothstep(0.0, 1.6, -d);
++	float light = max(dot(normal, normalize(vec2(-0.6, -1.0))), 0.0);
++	float shade = max(dot(normal, normalize(vec2(0.6, 1.0))), 0.0);
++	color += edge * (0.45 * light + 0.12 * shade);
++	color += bend * 0.06;
++
++	gl_FragColor = vec4(min(color, 1.0), 1.0) * coverage * alpha;
++}
+diff --git a/render/fx_renderer/shaders/meson.build b/render/fx_renderer/shaders/meson.build
+index 1bafd4f..582b2cb 100644
+--- a/render/fx_renderer/shaders/meson.build
++++ b/render/fx_renderer/shaders/meson.build
+@@ -14,6 +14,7 @@ shaders = [
+ 	'blur1.frag',
+ 	'blur2.frag',
+ 	'blur_effects.frag',
++	'liquid.frag',
+ ]
+ 
+ foreach name : shaders
+diff --git a/types/scene/wlr_scene.c b/types/scene/wlr_scene.c
+index 9a9fcc0..479901e 100644
+--- a/types/scene/wlr_scene.c
++++ b/types/scene/wlr_scene.c
+@@ -1188,6 +1188,15 @@ void wlr_scene_blur_set_strength(struct wlr_scene_blur *blur, float strength) {
+ 	scene_node_update(&blur->node, NULL);
+ }
+ 
++void wlr_scene_blur_set_liquid(struct wlr_scene_blur *blur, float liquid) {
++	if (blur->liquid == liquid) {
++		return;
++	}
++
++	blur->liquid = liquid;
++	scene_node_update(&blur->node, NULL);
++}
++
+ void wlr_scene_blur_set_clipped_region(struct wlr_scene_blur *blur,
+ 		struct clipped_region clipped_region) {
+ 	if (fx_corner_radii_eq(blur->clipped_region.corners, clipped_region.corners) &&
+@@ -2229,6 +2238,7 @@ static void scene_entry_render(struct render_list_entry *entry, const struct ren
+ 			.blur_data = &scene->blur_data,
+ 			.ignore_transparent = mask != NULL,
+ 			.blur_strength = blur->strength,
++			.liquid = blur->liquid * data->scale,
+ 		};
+ 		fx_render_pass_add_blur(fx_pass, &blur_options);
+ 		break;

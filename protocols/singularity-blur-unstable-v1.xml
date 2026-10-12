@@ -4,7 +4,7 @@
     Copyright 2026 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_blur_manager_v1" version="3">
+  <interface name="zsingularity_blur_manager_v1" version="5">
     <description summary="background material manager">
       Lets a client request a compositor-rendered material behind one of its
       surfaces. The compositor uses the surface alpha as the material mask.
@@ -25,18 +25,28 @@
     </request>
   </interface>
 
-  <interface name="zsingularity_blur_v1" version="3">
+  <interface name="zsingularity_blur_v1" version="5">
     <description summary="background material for a surface">
-      Parameters are double-buffered and become active on commit.
+      Parameters are double-buffered. In version 4, commit stages them for
+      the next wl_surface.commit. They become active with the surface state,
+      including synchronized subsurface commits. In earlier versions, commit
+      applies them immediately.
     </description>
 
     <enum name="mode">
       <entry name="disabled" value="0" summary="no background material"/>
       <entry name="glass" value="1" summary="refractive glass material"/>
       <entry name="blur" value="2" summary="classic background blur"/>
+      <entry name="liquid" value="3" since="5"
+             summary="glass that refracts the backdrop along its edges"/>
     </enum>
 
-    <request name="destroy" type="destructor"/>
+    <request name="destroy" type="destructor">
+      <description summary="remove the background material">
+        In version 4, removal becomes active on the next wl_surface.commit.
+        In earlier versions, removal is immediate.
+      </description>
+    </request>
 
     <request name="set_radius">
       <arg name="radius" type="uint" summary="legacy blur radius"/>
@@ -46,7 +56,14 @@
       <arg name="noise" type="uint" summary="legacy noise percentage"/>
     </request>
 
-    <request name="commit"/>
+    <request name="commit">
+      <description summary="commit the material parameters">
+        In version 4, copy the parameters to the pending surface state. Later
+        parameter requests do not change this copy until another commit.
+        A wl_surface.commit is needed to apply it. In earlier versions,
+        apply the parameters immediately.
+      </description>
+    </request>
 
     <request name="set_mode" since="2">
       <arg name="mode" type="uint" enum="mode"/>
@@ -65,6 +82,14 @@
         Values are percentages clamped to 0-100 by the compositor.
       </description>
       <arg name="strength" type="uint" summary="blur strength percentage"/>
+    </request>
+    <request name="set_corner_radius" since="5">
+      <description summary="set the corner radius of the material shapes">
+        Each connected part of the region is treated as a rounded rectangle
+        with this corner radius, in surface-local coordinates. Refractive
+        materials bend the backdrop along these edges.
+      </description>
+      <arg name="radius" type="uint" summary="corner radius"/>
     </request>
   </interface>
 </protocol>
