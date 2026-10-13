@@ -204,10 +204,10 @@ index 51cfe90..38aa8b9 100644
 +}
 diff --git a/render/fx_renderer/shaders/liquid.frag b/render/fx_renderer/shaders/liquid.frag
 new file mode 100644
-index 0000000..edc52b9
+index 0000000..50fdb79
 --- /dev/null
 +++ b/render/fx_renderer/shaders/liquid.frag
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,94 @@
 +#ifdef GL_FRAGMENT_PRECISION_HIGH
 +precision highp float;
 +#else
@@ -223,14 +223,36 @@ index 0000000..edc52b9
 +uniform float bezel;
 +uniform float alpha;
 +
++const float IOR = 1.5;
++const float SATURATION = 1.7;
++const float NOISE = 0.025;
++const vec3 LIGHT = vec3(-0.5, -0.866, 0.9);
++
 +float box_distance(vec2 p, vec2 half_size, float r) {
 +	vec2 q = abs(p) - half_size + r;
 +	return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 +}
 +
++float squircle(float x) {
++	float t = 1.0 - clamp(x, 0.0, 1.0);
++	return pow(1.0 - t * t * t * t, 0.25);
++}
++
++float hash(vec2 p) {
++	vec3 p3 = fract(vec3(p.xyx) * 0.1031);
++	p3 += dot(p3, p3.yzx + 33.33);
++	return fract((p3.x + p3.y) * p3.z);
++}
++
++vec3 saturate_color(vec3 c, float amount) {
++	float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
++	return mix(vec3(l), c, amount);
++}
++
 +void main() {
 +	vec2 half_size = size * 0.5;
-+	vec2 p = (v_texcoord - uv_box.xy) / uv_box.zw * size - half_size;
++	vec2 px = (v_texcoord - uv_box.xy) / uv_box.zw * size;
++	vec2 p = px - half_size;
 +	float r = min(radius, min(half_size.x, half_size.y));
 +	float d = box_distance(p, half_size, r);
 +	float coverage = clamp(0.5 - d, 0.0, 1.0);
@@ -239,29 +261,46 @@ index 0000000..edc52b9
 +	}
 +
 +	vec2 e = vec2(0.5, 0.0);
-+	vec2 normal = vec2(
++	vec2 edge_normal = vec2(
 +		box_distance(p + e.xy, half_size, r) - box_distance(p - e.xy, half_size, r),
 +		box_distance(p + e.yx, half_size, r) - box_distance(p - e.yx, half_size, r));
-+	float normal_length = length(normal);
-+	normal = normal_length > 0.0 ? normal / normal_length : vec2(0.0);
++	float normal_length = length(edge_normal);
++	edge_normal = normal_length > 0.0 ? edge_normal / normal_length : vec2(0.0);
 +
-+	float width = min(bezel, min(half_size.x, half_size.y));
-+	float rim = clamp(1.0 + d / max(width, 1.0), 0.0, 1.0);
-+	float bend = 1.0 - sqrt(1.0 - rim * rim);
-+	vec2 offset = -normal * bend * width / size * uv_box.zw;
++	float width = max(min(bezel, min(half_size.x, half_size.y)), 1.0);
++	float x = clamp(-d / width, 0.0, 1.0);
++	float slope = (squircle(x + 0.01) - squircle(max(x - 0.01, 0.0))) / (x + 0.01 - max(x - 0.01, 0.0));
++	vec3 normal = normalize(vec3(edge_normal * slope, 1.0));
 +
++	float cos_in = normal.z;
++	float sin_in = sqrt(max(1.0 - cos_in * cos_in, 0.0));
++	float sin_out = sin_in / IOR;
++	float angle = asin(sin_in) - asin(sin_out);
++	float thickness = width * squircle(x);
++	float shift = tan(angle) * thickness;
++	vec2 offset = -edge_normal * shift / size * uv_box.zw;
++
++	float spread = clamp(shift / width, 0.0, 1.0) * 0.08;
 +	vec3 color = vec3(
-+		texture2D(tex, v_texcoord + offset * 1.06).r,
++		texture2D(tex, v_texcoord + offset * (1.0 + spread)).r,
 +		texture2D(tex, v_texcoord + offset).g,
-+		texture2D(tex, v_texcoord + offset * 0.94).b);
++		texture2D(tex, v_texcoord + offset * (1.0 - spread)).b);
++	color = saturate_color(color, SATURATION);
 +
-+	float edge = 1.0 - smoothstep(0.0, 1.6, -d);
-+	float light = max(dot(normal, normalize(vec2(-0.6, -1.0))), 0.0);
-+	float shade = max(dot(normal, normalize(vec2(0.6, 1.0))), 0.0);
-+	color += edge * (0.45 * light + 0.12 * shade);
-+	color += bend * 0.06;
++	float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
++	color = mix(color, vec3(1.0), 0.05 * (1.0 - smoothstep(0.55, 0.9, luminance)));
 +
-+	gl_FragColor = vec4(min(color, 1.0), 1.0) * coverage * alpha;
++	float fresnel = pow(1.0 - normal.z, 3.0);
++	float specular = pow(max(dot(normal, normalize(LIGHT)), 0.0), 24.0);
++	float facing = dot(edge_normal, normalize(LIGHT.xy));
++	float rim = 1.0 - smoothstep(0.0, 1.5, -d);
++	color += fresnel * (0.35 + 0.45 * max(facing, 0.0));
++	color += specular * 0.35 * (1.0 - x);
++	color += rim * mix(0.10, 0.40, max(facing, 0.0));
++
++	color += (hash(px) - 0.5) * NOISE;
++
++	gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0) * coverage * alpha;
 +}
 diff --git a/render/fx_renderer/shaders/meson.build b/render/fx_renderer/shaders/meson.build
 index 1bafd4f..582b2cb 100644

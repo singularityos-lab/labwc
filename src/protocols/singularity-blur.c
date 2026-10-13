@@ -12,7 +12,7 @@
 
 #define SINGULARITY_BLUR_VERSION 5
 #define GLASS_STRENGTH_SCALE 0.6f
-#define LIQUID_STRENGTH_SCALE 0.3f
+#define LIQUID_STRENGTH_SCALE 0.55f
 #define LIQUID_BEZEL 18.0f
 
 struct blur_state {
