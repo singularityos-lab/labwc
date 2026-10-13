@@ -60,6 +60,12 @@ enum tiling_events_mode {
 		(LAB_TILING_EVENTS_REGION | LAB_TILING_EVENTS_EDGE),
 };
 
+enum lab_overlay_material {
+	LAB_OVERLAY_MATERIAL_NONE = 0,
+	LAB_OVERLAY_MATERIAL_BLUR,
+	LAB_OVERLAY_MATERIAL_LIQUID,
+};
+
 struct buf;
 
 struct button_map_entry {
@@ -126,6 +132,12 @@ struct rcxml {
 	struct shader_config {
 		char *liquid;
 	} shaders;
+
+	struct liquid_config {
+		float refraction;
+		float saturation;
+		float highlight;
+	} liquid;
 
 	/* placement */
 	enum lab_placement_policy placement_policy;
@@ -215,6 +227,7 @@ struct rcxml {
 	int snap_edge_corner_range;
 	bool snap_overlay_enabled;
 	bool snap_overlay_on_top;
+	enum lab_overlay_material snap_overlay_material;
 	int snap_overlay_delay_inner;
 	int snap_overlay_delay_outer;
 	bool snap_top_maximize;

@@ -1419,6 +1419,12 @@ entry(xmlNode *node, char *nodename, char *content)
 		}
 	} else if (!strcasecmp(nodename, "strength.blur")) {
 		set_float(content, &rc.blur.strength);
+	} else if (!strcasecmp(nodename, "refraction.liquid")) {
+		set_float(content, &rc.liquid.refraction);
+	} else if (!strcasecmp(nodename, "saturation.liquid")) {
+		set_float(content, &rc.liquid.saturation);
+	} else if (!strcasecmp(nodename, "highlight.liquid")) {
+		set_float(content, &rc.liquid.highlight);
 
 	} else if (!strcmp(nodename, "policy.placement")) {
 		enum lab_placement_policy policy = view_placement_parse(content);
@@ -1520,9 +1526,21 @@ entry(xmlNode *node, char *nodename, char *content)
 			rc.snap_overlay_on_top = true;
 		} else if (!strcasecmp(content, "below")) {
 			rc.snap_overlay_on_top = false;
+	rc.snap_overlay_material = LAB_OVERLAY_MATERIAL_NONE;
 		} else {
 			wlr_log(WLR_ERROR,
 				"ignoring invalid value for overlay placement");
+		}
+	} else if (!strcasecmp(nodename, "material.overlay.snapping")) {
+		if (!strcasecmp(content, "liquid")) {
+			rc.snap_overlay_material = LAB_OVERLAY_MATERIAL_LIQUID;
+		} else if (!strcasecmp(content, "blur")) {
+			rc.snap_overlay_material = LAB_OVERLAY_MATERIAL_BLUR;
+		} else if (!strcasecmp(content, "none")) {
+			rc.snap_overlay_material = LAB_OVERLAY_MATERIAL_NONE;
+		} else {
+			wlr_log(WLR_ERROR,
+				"ignoring invalid value for overlay material");
 		}
 	} else if (!strcasecmp(nodename, "inner.delay.overlay.snapping")) {
 		rc.snap_overlay_delay_inner = atoi(content);
@@ -1861,6 +1879,9 @@ rcxml_init(void)
 	rc.blur.contrast = 0.9f;
 	rc.blur.saturation = 1.1f;
 	rc.blur.strength = 1.0f;
+	rc.liquid.refraction = 1.5f;
+	rc.liquid.saturation = 1.7f;
+	rc.liquid.highlight = 1.0f;
 
 	rc.gap = 0;
 	rc.adaptive_sync = LAB_ADAPTIVE_SYNC_DISABLED;

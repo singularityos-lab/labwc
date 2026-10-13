@@ -24,6 +24,7 @@ handle_rect_destroy(struct wl_listener *listener, void *data)
 	wl_list_remove(&listener->link);
 	listener->notify = NULL;
 	overlay->rect = NULL;
+	overlay->blur = NULL;
 	overlay->opacity = 0.0f;
 }
 
@@ -35,7 +36,36 @@ handle_outgoing_rect_destroy(struct wl_listener *listener, void *data)
 	wl_list_remove(&listener->link);
 	listener->notify = NULL;
 	overlay->outgoing_rect = NULL;
+	overlay->outgoing_blur = NULL;
 	overlay->outgoing_opacity = 0.0f;
+}
+
+#define MATERIAL_RADIUS 14
+#define MATERIAL_BEZEL 18.0f
+
+static void
+material_create(struct overlay *overlay)
+{
+	overlay->blur = NULL;
+	if (rc.snap_overlay_material == LAB_OVERLAY_MATERIAL_NONE) {
+		return;
+	}
+	struct wlr_scene_blur *blur =
+		wlr_scene_blur_create(overlay->rect->tree, 1, 1);
+	if (!blur) {
+		return;
+	}
+	wlr_scene_node_lower_to_bottom(&blur->node);
+	wlr_scene_blur_set_strength(blur, rc.blur.strength);
+	wlr_scene_blur_set_corner_radius(blur, MATERIAL_RADIUS);
+	if (rc.snap_overlay_material == LAB_OVERLAY_MATERIAL_LIQUID) {
+		wlr_scene_blur_set_liquid(blur, MATERIAL_BEZEL);
+	}
+	wlr_scene_blur_set_alpha(blur, 0.0f);
+	if (overlay->rect->fill) {
+		wlr_scene_rect_set_corner_radius(overlay->rect->fill, MATERIAL_RADIUS);
+	}
+	overlay->blur = blur;
 }
 
 #define GROW_SEED_FRACTION 0.12
@@ -50,6 +80,9 @@ place_rect(struct overlay *overlay, struct wlr_box box)
 	box.height = MAX(1, box.height);
 	overlay->box = box;
 	lab_scene_rect_set_size(overlay->rect, box.width, box.height);
+	if (overlay->blur) {
+		wlr_scene_blur_set_size(overlay->blur, box.width, box.height);
+	}
 	wlr_scene_node_set_position(&overlay->rect->tree->node, box.x, box.y);
 }
 
@@ -88,6 +121,9 @@ finish_animation(struct overlay *overlay)
 	if (overlay->rect) {
 		overlay->opacity = 1.0f;
 		lab_scene_rect_set_opacity(overlay->rect, 1.0f);
+		if (overlay->blur) {
+			wlr_scene_blur_set_alpha(overlay->blur, 1.0f);
+		}
 	}
 	if (overlay->outgoing_rect) {
 		wlr_scene_node_destroy(&overlay->outgoing_rect->tree->node);
@@ -102,12 +138,19 @@ handle_animation_update(struct motion_timed *timed, double eased, double linear)
 		overlay->opacity = overlay->animation_opacity_from
 			+ (1.0f - overlay->animation_opacity_from) * (float)linear;
 		lab_scene_rect_set_opacity(overlay->rect, overlay->opacity);
+		if (overlay->blur) {
+			wlr_scene_blur_set_alpha(overlay->blur, overlay->opacity);
+		}
 	}
 	if (overlay->outgoing_rect) {
 		overlay->outgoing_opacity =
 			overlay->animation_outgoing_from * (1.0f - (float)linear);
 		lab_scene_rect_set_opacity(overlay->outgoing_rect,
 			overlay->outgoing_opacity);
+		if (overlay->outgoing_blur) {
+			wlr_scene_blur_set_alpha(overlay->outgoing_blur,
+				overlay->outgoing_opacity);
+		}
 	}
 }
 
@@ -175,6 +218,7 @@ show_overlay(struct seat *seat, struct theme_snapping_overlay *overlay_theme,
 		&seat->overlay.rect_destroy);
 	seat->overlay.opacity = 0.0f;
 	lab_scene_rect_set_opacity(seat->overlay.rect, 0.0f);
+	material_create(&seat->overlay);
 	start_animation(seat);
 
 	struct wlr_scene_node *node = &seat->overlay.rect->tree->node;
@@ -383,6 +427,7 @@ overlay_finish(struct seat *seat)
 		seat->overlay.rect_destroy.notify = NULL;
 		motion_spring_cancel(&seat->overlay.grow);
 		seat->overlay.outgoing_rect = seat->overlay.rect;
+		seat->overlay.outgoing_blur = seat->overlay.blur;
 		seat->overlay.outgoing_box = seat->overlay.box;
 		seat->overlay.outgoing_opacity = seat->overlay.opacity;
 		seat->overlay.outgoing_rect_destroy.notify =
@@ -390,6 +435,7 @@ overlay_finish(struct seat *seat)
 		wl_signal_add(&seat->overlay.outgoing_rect->tree->node.events.destroy,
 			&seat->overlay.outgoing_rect_destroy);
 		seat->overlay.rect = NULL;
+		seat->overlay.blur = NULL;
 		seat->overlay.opacity = 0.0f;
 		start_animation(seat);
 	}

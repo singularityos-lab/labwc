@@ -180,6 +180,9 @@ custom_shaders_reconfigure(void)
 	}
 	watch_start();
 	liquid_load();
+	fx_renderer_set_liquid_params(server.renderer, rc.liquid.refraction,
+		rc.liquid.saturation, rc.liquid.highlight);
+	damage_all_outputs();
 }
 
 void

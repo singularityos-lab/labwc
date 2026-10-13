@@ -1,20 +1,28 @@
 diff --git a/include/render/fx_renderer/fx_renderer.h b/include/render/fx_renderer/fx_renderer.h
-index ba6cc4b..640f700 100644
+index ba6cc4b..f72932d 100644
 --- a/include/render/fx_renderer/fx_renderer.h
 +++ b/include/render/fx_renderer/fx_renderer.h
-@@ -203,6 +203,7 @@ struct fx_renderer {
+@@ -203,8 +203,15 @@ struct fx_renderer {
  		struct blur_shader blur1;
  		struct blur_shader blur2;
  		struct blur_effects_shader blur_effects;
 +		struct liquid_shader liquid;
  	} shaders;
  
++	struct {
++		float refraction;
++		float saturation;
++		float highlight;
++	} liquid_params;
++
  	struct wl_list buffers; // fx_framebuffer.link
+ 	struct wl_list textures; // fx_texture.link
+ 	struct wl_list offscreen_buffers; // fx_offscreen_buffers.link
 diff --git a/include/render/fx_renderer/shaders.h b/include/render/fx_renderer/shaders.h
-index f3a2bd5..50f21cf 100644
+index f3a2bd5..6263e06 100644
 --- a/include/render/fx_renderer/shaders.h
 +++ b/include/render/fx_renderer/shaders.h
-@@ -176,4 +176,22 @@ struct blur_effects_shader {
+@@ -176,4 +176,25 @@ struct blur_effects_shader {
  
  bool link_blur_effects_program(struct blur_effects_shader *shader);
  
@@ -30,6 +38,9 @@ index f3a2bd5..50f21cf 100644
 +	GLint bezel;
 +	GLint alpha;
 +	GLint overlay;
++	GLint refraction;
++	GLint saturation;
++	GLint highlight;
 +};
 +
 +bool link_liquid_program(struct liquid_shader *shader);
@@ -38,15 +49,18 @@ index f3a2bd5..50f21cf 100644
 +
  #endif
 diff --git a/include/scenefx/render/fx_renderer/fx_renderer.h b/include/scenefx/render/fx_renderer/fx_renderer.h
-index cbd312d..2a23507 100644
+index cbd312d..2fe1435 100644
 --- a/include/scenefx/render/fx_renderer/fx_renderer.h
 +++ b/include/scenefx/render/fx_renderer/fx_renderer.h
-@@ -17,6 +17,9 @@ struct fx_renderer *fx_get_renderer(struct wlr_renderer *wlr_renderer);
+@@ -17,6 +17,12 @@ struct fx_renderer *fx_get_renderer(struct wlr_renderer *wlr_renderer);
  bool fx_renderer_check_ext(struct wlr_renderer *renderer, const char *ext);
  GLuint fx_renderer_get_buffer_fbo(struct wlr_renderer *renderer, struct wlr_buffer *buffer);
  
 +bool fx_renderer_set_liquid_shader(struct wlr_renderer *renderer, const char *source,
 +	char **error);
++
++void fx_renderer_set_liquid_params(struct wlr_renderer *renderer, float refraction,
++	float saturation, float highlight);
 +
  //
  // fx_texture
@@ -89,10 +103,10 @@ index ac1bc49..c81baaf 100644
   * Sets the region where to clip the blur.
   *
 diff --git a/render/fx_renderer/fx_pass.c b/render/fx_renderer/fx_pass.c
-index 39b6226..3358ad2 100644
+index 39b6226..98f18db 100644
 --- a/render/fx_renderer/fx_pass.c
 +++ b/render/fx_renderer/fx_pass.c
-@@ -1098,6 +1098,80 @@ static struct fx_framebuffer *get_main_buffer_blur(struct fx_gles_render_pass *p
+@@ -1098,6 +1098,83 @@ static struct fx_framebuffer *get_main_buffer_blur(struct fx_gles_render_pass *p
  	return fx_options->current_buffer;
  }
  
@@ -159,6 +173,9 @@ index 39b6226..3358ad2 100644
 +	glUniform1f(shader.bezel, fx_options->liquid);
 +	glUniform1f(shader.alpha, tex_options->base.alpha ? *tex_options->base.alpha : 1.0f);
 +	glUniform1f(shader.overlay, fx_options->liquid_overlay ? 1.0f : 0.0f);
++	glUniform1f(shader.refraction, renderer->liquid_params.refraction);
++	glUniform1f(shader.saturation, renderer->liquid_params.saturation);
++	glUniform1f(shader.highlight, renderer->liquid_params.highlight);
 +
 +	set_proj_matrix(shader.proj, pass->projection_matrix, &shape);
 +	set_tex_matrix(shader.tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &src_fbox);
@@ -173,7 +190,7 @@ index 39b6226..3358ad2 100644
  void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
  		struct fx_render_blur_pass_options *fx_options) {
  	if (pass->fx_offscreen_buffers == NULL) {
-@@ -1147,6 +1221,11 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
+@@ -1147,6 +1224,11 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
  		stencil_mask_close(true);
  	}
  
@@ -185,7 +202,7 @@ index 39b6226..3358ad2 100644
  	// Draw the blurred texture
  	tex_options->base.dst_box = (struct wlr_box) {
  		.x = 0,
-@@ -1166,6 +1245,7 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
+@@ -1166,6 +1248,7 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
  	tex_options->clipped_region = fx_options->clipped_region;
  	fx_render_pass_add_texture(pass, tex_options);
  
@@ -194,7 +211,7 @@ index 39b6226..3358ad2 100644
  
  	// Finish stenciling
 diff --git a/render/fx_renderer/fx_renderer.c b/render/fx_renderer/fx_renderer.c
-index 8d0a7b2..d483d23 100644
+index 8d0a7b2..cd188e7 100644
 --- a/render/fx_renderer/fx_renderer.c
 +++ b/render/fx_renderer/fx_renderer.c
 @@ -8,6 +8,7 @@
@@ -224,7 +241,17 @@ index 8d0a7b2..d483d23 100644
  
  	return true;
  
-@@ -610,3 +616,23 @@ error:
+@@ -469,6 +475,9 @@ struct wlr_renderer *fx_renderer_create_egl(struct wlr_egl *egl) {
+ 	renderer->egl = egl;
+ 	renderer->exts_str = exts_str;
+ 	renderer->drm_fd = -1;
++	renderer->liquid_params.refraction = 1.5f;
++	renderer->liquid_params.saturation = 1.7f;
++	renderer->liquid_params.highlight = 1.0f;
+ 
+ 	wlr_log(WLR_INFO, "Creating scenefx FX renderer");
+ 	wlr_log(WLR_INFO, "Using %s", glGetString(GL_VERSION));
+@@ -610,3 +619,31 @@ error:
  	free(renderer);
  	return NULL;
  }
@@ -248,8 +275,16 @@ index 8d0a7b2..d483d23 100644
 +	wlr_egl_restore_context(&prev_ctx);
 +	return ok;
 +}
++
++void fx_renderer_set_liquid_params(struct wlr_renderer *wlr_renderer, float refraction,
++		float saturation, float highlight) {
++	struct fx_renderer *renderer = fx_get_renderer(wlr_renderer);
++	renderer->liquid_params.refraction = refraction;
++	renderer->liquid_params.saturation = saturation;
++	renderer->liquid_params.highlight = highlight;
++}
 diff --git a/render/fx_renderer/shaders.c b/render/fx_renderer/shaders.c
-index 51cfe90..d8ef618 100644
+index 51cfe90..e3b17b9 100644
 --- a/render/fx_renderer/shaders.c
 +++ b/render/fx_renderer/shaders.c
 @@ -1,6 +1,7 @@
@@ -355,7 +390,7 @@ index 51cfe90..d8ef618 100644
  
  bool check_gl_ext(const char *exts, const char *ext) {
  	size_t extlen = strlen(ext);
-@@ -359,3 +403,28 @@ bool link_blur_effects_program(struct blur_effects_shader *shader) {
+@@ -359,3 +403,31 @@ bool link_blur_effects_program(struct blur_effects_shader *shader) {
  
  	return true;
  }
@@ -381,15 +416,18 @@ index 51cfe90..d8ef618 100644
 +	shader->bezel = glGetUniformLocation(prog, "bezel");
 +	shader->alpha = glGetUniformLocation(prog, "alpha");
 +	shader->overlay = glGetUniformLocation(prog, "overlay");
++	shader->refraction = glGetUniformLocation(prog, "refraction");
++	shader->saturation = glGetUniformLocation(prog, "saturation");
++	shader->highlight = glGetUniformLocation(prog, "highlight");
 +
 +	return true;
 +}
 diff --git a/render/fx_renderer/shaders/liquid.frag b/render/fx_renderer/shaders/liquid.frag
 new file mode 100644
-index 0000000..e040d0d
+index 0000000..90925cc
 --- /dev/null
 +++ b/render/fx_renderer/shaders/liquid.frag
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,97 @@
 +#ifdef GL_FRAGMENT_PRECISION_HIGH
 +precision highp float;
 +#else
@@ -405,9 +443,10 @@ index 0000000..e040d0d
 +uniform float bezel;
 +uniform float alpha;
 +uniform float overlay;
++uniform float refraction;
++uniform float saturation;
++uniform float highlight;
 +
-+const float IOR = 1.5;
-+const float SATURATION = 1.7;
 +const float NOISE = 0.025;
 +const vec3 LIGHT = vec3(-0.5, -0.866, 0.9);
 +
@@ -457,7 +496,7 @@ index 0000000..e040d0d
 +
 +	float cos_in = normal.z;
 +	float sin_in = sqrt(max(1.0 - cos_in * cos_in, 0.0));
-+	float sin_out = sin_in / IOR;
++	float sin_out = sin_in / max(refraction, 1.0);
 +	float angle = asin(sin_in) - asin(sin_out);
 +	float thickness = width * squircle(x);
 +	float shift = tan(angle) * thickness;
@@ -468,7 +507,7 @@ index 0000000..e040d0d
 +		texture2D(tex, v_texcoord + offset * (1.0 + spread)).r,
 +		texture2D(tex, v_texcoord + offset).g,
 +		texture2D(tex, v_texcoord + offset * (1.0 - spread)).b);
-+	color = saturate_color(color, SATURATION);
++	color = saturate_color(color, saturation);
 +
 +	float luminance = dot(color, vec3(0.2126, 0.7152, 0.0722));
 +	color = mix(color, vec3(1.0), 0.05 * (1.0 - smoothstep(0.55, 0.9, luminance)));
@@ -477,9 +516,9 @@ index 0000000..e040d0d
 +	float specular = pow(max(dot(normal, normalize(LIGHT)), 0.0), 24.0);
 +	float facing = dot(edge_normal, normalize(LIGHT.xy));
 +	float rim = 1.0 - smoothstep(0.0, 1.5, -d);
-+	color += fresnel * (0.35 + 0.45 * max(facing, 0.0));
-+	color += specular * 0.35 * (1.0 - x);
-+	color += rim * mix(0.10, 0.40, max(facing, 0.0));
++	color += fresnel * (0.35 + 0.45 * max(facing, 0.0)) * highlight;
++	color += specular * 0.35 * (1.0 - x) * highlight;
++	color += rim * mix(0.10, 0.40, max(facing, 0.0)) * highlight;
 +
 +	color += (hash(px) - 0.5) * NOISE;
 +

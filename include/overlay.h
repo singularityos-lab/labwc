@@ -14,7 +14,9 @@ struct overlay {
 	struct lab_scene_rect *rect;
 	float opacity;
 	struct wl_listener rect_destroy;
+	struct wlr_scene_blur *blur;
 	struct lab_scene_rect *outgoing_rect;
+	struct wlr_scene_blur *outgoing_blur;
 	float outgoing_opacity;
 	struct wl_listener outgoing_rect_destroy;
 

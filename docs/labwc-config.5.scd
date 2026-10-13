@@ -558,6 +558,10 @@ extending outward from the snapped edge.
 	Place the snap-overlay above the currently dragged window
 	instead of below it. Default is below.
 
+*<snapping><overlay><material>* [none|blur|liquid]
+	Draw the snap-overlay on a blurred or liquid glass backdrop with
+	rounded corners. Default is none.
+
 *<snapping><overlay><delay><inner>*++
 *<snapping><overlay><delay><outer>*
 	Sets the delay to show an overlay when snapping a window to each type of
@@ -785,6 +789,20 @@ Settings of the blur effect rendered behind windows that request it with the
 	Overall strength of the blur between 0 and 1, where 0 disables the blur.
 	Default is 1.
 
+## LIQUID GLASS
+
+*<liquid><refraction>*
+	Index of refraction of the liquid glass edge. 1.0 disables the
+	refraction, higher values bend the backdrop more. Default is 1.5.
+
+*<liquid><saturation>*
+	Saturation of the backdrop seen through liquid glass, where 1.0 leaves
+	it unchanged. Default is 1.7.
+
+*<liquid><highlight>*
+	Intensity of the light on the rim of liquid glass, where 0 removes it.
+	Default is 1.
+
 ## SHADERS
 
 Fragment shaders that replace the built-in ones. A shader file is watched:
@@ -811,6 +829,8 @@ entry is removed, the built-in shader is used.
 	- *uniform float alpha*: opacity of the material
 	- *uniform float overlay*: 1.0 when drawing the edge band above a
 	  window, 0.0 when drawing the material below it
+	- *uniform float refraction*, *saturation*, *highlight*: the values
+	  of *<liquid>*
 
 	The output is premultiplied: multiply the color by its coverage and by
 	*alpha*. Above a window, also fade the output to zero toward the
