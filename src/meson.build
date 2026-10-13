@@ -2,6 +2,7 @@ labwc_sources = files(
   'a11y.c',
   'action.c',
   'background-effect.c',
+  'custom-shaders.c',
   'buffer.c',
   'color-filter.c',
   'debug.c',

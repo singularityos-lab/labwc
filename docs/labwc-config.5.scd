@@ -785,6 +785,34 @@ Settings of the blur effect rendered behind windows that request it with the
 	Overall strength of the blur between 0 and 1, where 0 disables the blur.
 	Default is 1.
 
+## SHADERS
+
+Fragment shaders that replace the built-in ones. A shader file is watched:
+saving it reloads the shader immediately, without a reconfigure. A shader
+that fails to compile is rejected, the compiler errors are written to the
+log, and the shader in use stays active. When the file is missing or the
+entry is removed, the built-in shader is used.
+
+*<shaders><liquid>*
+	Path to the fragment shader of the liquid glass material. Relative paths
+	are resolved against the directory of the rc.xml file that sets them; *~*
+	and environment variables are expanded.
+
+	The shader is GLSL ES 1.0 and draws one rounded rectangle of the
+	material. It receives:
+
+	- *varying vec2 v_texcoord*: position in the blurred backdrop texture
+	- *uniform sampler2D tex*: the blurred backdrop of the whole output
+	- *uniform vec4 uv_box*: origin and size of the rectangle in texture
+	  coordinates
+	- *uniform vec2 size*: size of the rectangle in pixels
+	- *uniform float radius*: corner radius in pixels
+	- *uniform float bezel*: width of the refracting edge in pixels
+	- *uniform float alpha*: opacity of the material
+
+	The output is premultiplied: multiply the color by its coverage and by
+	*alpha*.
+
 ## MARGIN
 
 *<margin top="" bottom="" left="" right="" output="" />*

@@ -35,6 +35,9 @@
     <saturation>1.1</saturation>
     <strength>1.0</strength>
   </blur>
+  <shaders>
+    <liquid>shaders/liquid.frag</liquid>
+  </shaders>
   <animations>
     <durationScale>1</durationScale>
     <windowOpen><duration>320</duration><curve>enter</curve></windowOpen>

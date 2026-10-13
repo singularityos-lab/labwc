@@ -123,6 +123,10 @@ struct rcxml {
 		float strength;
 	} blur;
 
+	struct shader_config {
+		char *liquid;
+	} shaders;
+
 	/* placement */
 	enum lab_placement_policy placement_policy;
 	int placement_cascade_offset_x;

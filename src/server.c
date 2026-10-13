@@ -67,6 +67,7 @@
 #include "common/scene-helpers.h"
 #include "config/rcxml.h"
 #include "config/session.h"
+#include "custom-shaders.h"
 #include "decorations.h"
 #include "desktop-entry.h"
 #include "foreign-toplevel/foreign.h"
@@ -142,6 +143,7 @@ reload_config_and_theme(void)
 	menu_reconfigure();
 	seat_reconfigure();
 	background_effect_reconfigure();
+	custom_shaders_reconfigure();
 	a11y_reconfigure();
 	regions_reconfigure();
 	resize_indicator_reconfigure();
@@ -946,6 +948,7 @@ server_init(void)
 		server.wl_display,
 		EXT_BACKGROUND_EFFECT_MANAGER_V1_CAPABILITY_BLUR);
 	background_effect_reconfigure();
+	custom_shaders_reconfigure();
 
 #if WLR_HAS_DRM_BACKEND
 	server.drm_lease_manager = wlr_drm_lease_v1_manager_create(
@@ -1028,6 +1031,7 @@ void
 server_finish(void)
 {
 	tablet_state_remove();
+	custom_shaders_finish();
 #if HAVE_XWAYLAND
 	xwayland_server_finish();
 #endif

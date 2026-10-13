@@ -41,6 +41,8 @@
 #include "window-rules.h"
 #include "workspaces.h"
 
+static const char *parsing_file;
+
 /* for backward compatibility of <mouse><scrollFactor> */
 static double mouse_scroll_factor = -1;
 
@@ -1406,6 +1408,15 @@ entry(xmlNode *node, char *nodename, char *content)
 		set_float(content, &rc.blur.contrast);
 	} else if (!strcasecmp(nodename, "saturation.blur")) {
 		set_float(content, &rc.blur.saturation);
+	} else if (!strcasecmp(nodename, "liquid.shaders")) {
+		const char *slash = parsing_file ? strrchr(parsing_file, '/') : NULL;
+		if (slash && content[0] != '/' && content[0] != '~' && content[0] != '$') {
+			zfree(rc.shaders.liquid);
+			rc.shaders.liquid = strdup_printf("%.*s/%s",
+				(int)(slash - parsing_file), parsing_file, content);
+		} else {
+			xstrdup_replace(rc.shaders.liquid, content);
+		}
 	} else if (!strcasecmp(nodename, "strength.blur")) {
 		set_float(content, &rc.blur.strength);
 
@@ -2471,8 +2482,10 @@ rcxml_read(const char *filename)
 		}
 
 		nag_log(WLR_INFO, "read config file %s", path->string);
+		parsing_file = path->string;
 
 		rcxml_parse_xml(&b);
+		parsing_file = NULL;
 		buf_reset(&b);
 		if (!should_merge_config) {
 			break;
@@ -2492,6 +2505,7 @@ rcxml_finish(void)
 	zfree(rc.font_menuitem.name);
 	zfree(rc.font_osd.name);
 	zfree(rc.prompt_command);
+	zfree(rc.shaders.liquid);
 	zfree(rc.error_command);
 	zfree(rc.a11y_feedback_command);
 	zfree(rc.theme_name);
