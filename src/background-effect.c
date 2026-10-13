@@ -385,6 +385,40 @@ region_components(pixman_region32_t *region, int *count)
 }
 
 /*
+ * A toplevel paints its own background over the material, which hides
+ * the refraction and the rim of a liquid region. A second liquid node
+ * right above the surface renders only the bezel band, fading inward.
+ */
+static void
+blur_overlay_create(struct background_effect_surface *surface,
+		struct wlr_scene_node *node, const pixman_box32_t *rect)
+{
+	struct background_effect_surface_state *state = &surface->current;
+	int width = rect->x2 - rect->x1;
+	int height = rect->y2 - rect->y1;
+	struct wlr_scene_blur *blur =
+		wlr_scene_blur_create(node->parent, width, height);
+	if (!blur) {
+		wlr_log(WLR_ERROR, "failed to create liquid overlay node");
+		return;
+	}
+	wlr_scene_node_set_position(&blur->node,
+		node->x + rect->x1, node->y + rect->y1);
+	wlr_scene_blur_set_strength(blur,
+		rc.blur.strength * state->strength_scale);
+	wlr_scene_blur_set_corner_radius(blur, state->corner_radius);
+	wlr_scene_blur_set_liquid(blur, state->liquid);
+	wlr_scene_blur_set_liquid_overlay(blur, true);
+	wlr_scene_node_place_above(&blur->node, node);
+
+	struct blur_node *blur_node = znew(*blur_node);
+	blur_node->blur = blur;
+	blur_node->destroy.notify = handle_blur_node_destroy;
+	wl_signal_add(&blur->node.events.destroy, &blur_node->destroy);
+	wl_list_insert(&surface->blur_nodes, &blur_node->link);
+}
+
+/*
  * Create/destroy wlr_scene_blur nodes so that they match the committed
  * blur region of the surface.
  */
@@ -549,6 +583,10 @@ blur_nodes_update(struct background_effect_surface *surface)
 		blur_node->destroy.notify = handle_blur_node_destroy;
 		wl_signal_add(&blur->node.events.destroy, &blur_node->destroy);
 		wl_list_insert(&surface->blur_nodes, &blur_node->link);
+
+		if (view && state->liquid > 0.0f) {
+			blur_overlay_create(surface, node, &rects[i]);
+		}
 	}
 
 	free(shapes);

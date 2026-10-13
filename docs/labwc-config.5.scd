@@ -809,9 +809,13 @@ entry is removed, the built-in shader is used.
 	- *uniform float radius*: corner radius in pixels
 	- *uniform float bezel*: width of the refracting edge in pixels
 	- *uniform float alpha*: opacity of the material
+	- *uniform float overlay*: 1.0 when drawing the edge band above a
+	  window, 0.0 when drawing the material below it
 
 	The output is premultiplied: multiply the color by its coverage and by
-	*alpha*.
+	*alpha*. Above a window, also fade the output to zero toward the
+	inner edge of the bezel, or the window content is covered. A shader
+	without the *overlay* uniform is not drawn above windows.
 
 ## MARGIN
 
