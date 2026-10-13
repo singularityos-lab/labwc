@@ -84,10 +84,10 @@ index ac1bc49..1816c07 100644
   * Sets the region where to clip the blur.
   *
 diff --git a/render/fx_renderer/fx_pass.c b/render/fx_renderer/fx_pass.c
-index 39b6226..f3208b3 100644
+index 39b6226..7c83cd2 100644
 --- a/render/fx_renderer/fx_pass.c
 +++ b/render/fx_renderer/fx_pass.c
-@@ -1098,6 +1098,52 @@ static struct fx_framebuffer *get_main_buffer_blur(struct fx_gles_render_pass *p
+@@ -1098,6 +1098,76 @@ static struct fx_framebuffer *get_main_buffer_blur(struct fx_gles_render_pass *p
  	return fx_options->current_buffer;
  }
  
@@ -104,11 +104,34 @@ index 39b6226..f3208b3 100644
 +	struct fx_corner_fradii corners = tex_options->corners;
 +	float radius = fmaxf(fmaxf(corners.top_left, corners.top_right),
 +		fmaxf(corners.bottom_left, corners.bottom_right));
++	int outset = (int)ceilf(fx_options->liquid * 4.0f + radius) + 8;
++	int buffer_width = pass->buffer->buffer->width;
++	int buffer_height = pass->buffer->buffer->height;
++	struct wlr_box shape = *box;
++	if (box->x <= 0) {
++		shape.x -= outset;
++		shape.width += outset;
++	}
++	if (box->y <= 0) {
++		shape.y -= outset;
++		shape.height += outset;
++	}
++	if (box->x + box->width >= buffer_width) {
++		shape.width += outset;
++	}
++	if (box->y + box->height >= buffer_height) {
++		shape.height += outset;
++	}
++	pixman_region32_t clip;
++	pixman_region32_init_rect(&clip, box->x, box->y, box->width, box->height);
++	if (tex_options->base.clip) {
++		pixman_region32_intersect(&clip, &clip, tex_options->base.clip);
++	}
 +	struct wlr_fbox src_fbox = {
-+		.x = (double)box->x / texture->wlr_texture.width,
-+		.y = (double)box->y / texture->wlr_texture.height,
-+		.width = (double)box->width / texture->wlr_texture.width,
-+		.height = (double)box->height / texture->wlr_texture.height,
++		.x = (double)shape.x / texture->wlr_texture.width,
++		.y = (double)shape.y / texture->wlr_texture.height,
++		.width = (double)shape.width / texture->wlr_texture.width,
++		.height = (double)shape.height / texture->wlr_texture.height,
 +	};
 +
 +	push_fx_debug(renderer);
@@ -123,15 +146,16 @@ index 39b6226..f3208b3 100644
 +	glUniform1i(shader.tex, 0);
 +	glUniform4f(shader.uv_box, src_fbox.x, src_fbox.y,
 +		src_fbox.width, src_fbox.height);
-+	glUniform2f(shader.size, box->width, box->height);
++	glUniform2f(shader.size, shape.width, shape.height);
 +	glUniform1f(shader.radius, radius);
 +	glUniform1f(shader.bezel, fx_options->liquid);
 +	glUniform1f(shader.alpha, tex_options->base.alpha ? *tex_options->base.alpha : 1.0f);
 +
-+	set_proj_matrix(shader.proj, pass->projection_matrix, box);
++	set_proj_matrix(shader.proj, pass->projection_matrix, &shape);
 +	set_tex_matrix(shader.tex_proj, WL_OUTPUT_TRANSFORM_NORMAL, &src_fbox);
 +
-+	render(box, tex_options->base.clip, shader.pos_attrib);
++	render(&shape, &clip, shader.pos_attrib);
++	pixman_region32_fini(&clip);
 +
 +	glBindTexture(texture->target, 0);
 +	pop_fx_debug(renderer);
@@ -140,7 +164,7 @@ index 39b6226..f3208b3 100644
  void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
  		struct fx_render_blur_pass_options *fx_options) {
  	if (pass->fx_offscreen_buffers == NULL) {
-@@ -1147,6 +1193,11 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
+@@ -1147,6 +1217,11 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
  		stencil_mask_close(true);
  	}
  
@@ -152,7 +176,7 @@ index 39b6226..f3208b3 100644
  	// Draw the blurred texture
  	tex_options->base.dst_box = (struct wlr_box) {
  		.x = 0,
-@@ -1166,6 +1217,7 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
+@@ -1166,6 +1241,7 @@ void fx_render_pass_add_blur(struct fx_gles_render_pass *pass,
  	tex_options->clipped_region = fx_options->clipped_region;
  	fx_render_pass_add_texture(pass, tex_options);
  
