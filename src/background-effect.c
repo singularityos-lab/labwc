@@ -317,10 +317,20 @@ handle_surface_node_destroy(struct wl_listener *listener, void *data)
 {
 	struct background_effect_surface *surface =
 		wl_container_of(listener, surface, surface_node_destroy);
+	struct wlr_scene_tree *parent = surface->surface_node->parent;
 	wl_list_remove(&surface->surface_node_destroy.link);
 	surface->surface_node = NULL;
-	/* no-op if the whole scene-tree is being destroyed */
-	blur_nodes_destroy(surface);
+
+	struct blur_node *blur_node, *tmp;
+	wl_list_for_each_safe(blur_node, tmp, &surface->blur_nodes, link) {
+		if (blur_node->blur->node.parent == parent) {
+			wlr_scene_node_set_enabled(&blur_node->blur->node, false);
+		} else {
+			wlr_scene_node_destroy(&blur_node->blur->node);
+		}
+	}
+	pixman_region32_clear(&surface->applied);
+	surface->applied_tree = NULL;
 }
 
 static int
