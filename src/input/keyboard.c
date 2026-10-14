@@ -705,6 +705,7 @@ handle_key(struct wl_listener *listener, void *data)
 
 	if (keyboard->accessx_swallow) {
 		keyboard->accessx_swallow = false;
+		keyboard_cancel_keybind_repeat(keyboard);
 		idle_manager_notify_activity(keyboard->base.seat->wlr_seat);
 		return;
 	}
