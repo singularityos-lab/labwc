@@ -1,7 +1,7 @@
 [wrap-git]
 url = https://github.com/wlrfx/scenefx.git
 revision = 37ccd723bef49e6891156ffafce8f549f01446cc
-diff_files = scenefx-liquid.patch
+diff_files = scenefx-liquid.patch, scenefx-software-sync.patch
 
 [provide]
 dependency_names = scenefx-0.5

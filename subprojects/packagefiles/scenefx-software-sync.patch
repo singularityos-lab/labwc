@@ -1,0 +1,34 @@
+--- a/include/render/fx_renderer/fx_renderer.h
++++ b/include/render/fx_renderer/fx_renderer.h
+@@ -166,6 +166,8 @@
+ 		bool EXT_disjoint_timer_query;
+ 	} exts;
+ 
++	bool software_rasterizer;
++
+ 	struct {
+ 		PFNGLEGLIMAGETARGETTEXTURE2DOESPROC glEGLImageTargetTexture2DOES;
+ 		PFNGLDEBUGMESSAGECALLBACKKHRPROC glDebugMessageCallbackKHR;
+--- a/render/fx_renderer/fx_renderer.c
++++ b/render/fx_renderer/fx_renderer.c
+@@ -483,6 +483,9 @@
+ 	wlr_log(WLR_INFO, "Using %s", glGetString(GL_VERSION));
+ 	wlr_log(WLR_INFO, "GL vendor: %s", glGetString(GL_VENDOR));
+ 	wlr_log(WLR_INFO, "GL renderer: %s", glGetString(GL_RENDERER));
++	const char *gl_renderer = (const char *)glGetString(GL_RENDERER);
++	renderer->software_rasterizer = gl_renderer != NULL &&
++		(strstr(gl_renderer, "llvmpipe") != NULL || strstr(gl_renderer, "softpipe") != NULL);
+ 	wlr_log(WLR_INFO, "Supported FX extensions: %s", exts_str);
+ 
+ 	if (!renderer->egl->exts.EXT_image_dma_buf_import) {
+--- a/render/fx_renderer/fx_pass.c
++++ b/render/fx_renderer/fx_pass.c
+@@ -145,6 +145,8 @@
+ 		if (!ok) {
+ 			goto out;
+ 		}
++	} else if (renderer->software_rasterizer) {
++		glFinish();
+ 	} else {
+ 		glFlush();
+ 	}
