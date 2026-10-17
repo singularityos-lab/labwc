@@ -525,6 +525,8 @@ handle_renderer_lost(struct wl_listener *listener, void *data)
 	struct wlr_renderer *renderer = fx_renderer_create(server.backend);
 	if (!renderer) {
 		wlr_log(WLR_ERROR, "Unable to create renderer");
+		server.render_failed = true;
+		wl_display_terminate(server.wl_display);
 		return;
 	}
 

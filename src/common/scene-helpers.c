@@ -2,10 +2,13 @@
 
 #include "common/scene-helpers.h"
 #include <assert.h>
+#include <wlr/backend/session.h>
+#include <wlr/render/pixman.h>
 #include <wlr/types/wlr_output.h>
 #include <scenefx/types/wlr_scene.h>
 #include <wlr/util/log.h>
 #include "color-filter.h"
+#include "labwc.h"
 #include "common/mem.h"
 #include "magnifier.h"
 #include "output.h"
@@ -102,6 +105,27 @@ lab_wlr_scene_output_damage_whole(struct wlr_scene_output *scene_output)
 	pixman_region32_fini(&region);
 }
 
+#define RENDER_FAILURE_LIMIT 180
+
+static void
+render_watchdog(bool ok)
+{
+	static int failures;
+	if (ok || wlr_renderer_is_pixman(server.renderer)
+			|| (server.session && !server.session->active)) {
+		failures = 0;
+		return;
+	}
+	if (++failures < RENDER_FAILURE_LIMIT || server.render_failed) {
+		return;
+	}
+	wlr_log(WLR_ERROR, "GPU rendering failed for %d frames in a row, "
+		"exiting so the session can fall back to software rendering",
+		failures);
+	server.render_failed = true;
+	wl_display_terminate(server.wl_display);
+}
+
 /*
  * This is a copy of wlr_scene_output_commit()
  * as it doesn't use the pending state at all.
@@ -132,6 +156,7 @@ lab_wlr_scene_output_commit(struct wlr_scene_output *scene_output,
 	if (!wlr_scene_output_build_state(scene_output, state, &options)) {
 		wlr_log(WLR_ERROR, "Failed to build output state for %s",
 			wlr_output->name);
+		render_watchdog(false);
 		return false;
 	}
 
@@ -171,8 +196,10 @@ lab_wlr_scene_output_commit(struct wlr_scene_output *scene_output,
 	} else {
 		wlr_log(WLR_INFO, "Failed to commit output %s",
 			wlr_output->name);
+		render_watchdog(false);
 		return false;
 	}
+	render_watchdog(true);
 
 	if (!wlr_box_empty(&additional_damage)) {
 		pixman_region32_t region;

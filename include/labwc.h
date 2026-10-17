@@ -199,6 +199,7 @@ struct server {
 	struct wl_event_source *sigchld_source;
 	struct wl_event_source *sigusr1_source;
 	bool restart_requested;
+	bool render_failed;
 
 	struct wlr_xdg_shell *xdg_shell;
 	struct wlr_xdg_output_manager_v1 *xdg_output_manager;

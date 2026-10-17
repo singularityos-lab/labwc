@@ -350,10 +350,11 @@ main(int argc, char *argv[])
 	font_finish();
 
 	bool restart = server.restart_requested;
+	bool render_failed = server.render_failed;
 	server_finish();
 
 	if (restart) {
 		restart_in_place(self_path, argv);
 	}
-	return 0;
+	return render_failed ? 75 : 0;
 }
