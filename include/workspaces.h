@@ -22,6 +22,7 @@ struct workspace {
 
 	struct wlr_ext_workspace_handle_v1 *ext_workspace;
 	struct wl_list output_handles;
+	bool dynamic;
 };
 
 void workspaces_init(void);

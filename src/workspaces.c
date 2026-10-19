@@ -19,6 +19,7 @@
 #include "common/list.h"
 #include "common/mem.h"
 #include "common/scene-helpers.h"
+#include "common/string-helpers.h"
 #include "config/rcxml.h"
 #include "input/keyboard.h"
 #include "foreign-toplevel/foreign.h"
@@ -245,6 +246,47 @@ workspace_find_by_name(const char *name)
 	return NULL;
 }
 
+static struct workspace *add_workspace(const char *name);
+static void remove_workspace(struct workspace *workspace);
+
+static bool
+workspace_name_taken(const char *name)
+{
+	struct workspace *workspace;
+	wl_list_for_each(workspace, &server.workspaces.all, link) {
+		if (!strcmp(workspace->name, name)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void
+create_dynamic_workspace(const char *requested)
+{
+	char *name = xstrdup(requested && *requested ? requested : "1");
+	for (int i = 2; workspace_name_taken(name); i++) {
+		free(name);
+		name = strdup_printf("%s %d", requested && *requested ? requested : "1", i);
+	}
+	struct workspace *workspace = add_workspace(name);
+	workspace->dynamic = true;
+	wlr_log(WLR_INFO, "created workspace %s", name);
+	free(name);
+}
+
+static struct workspace *
+request_workspace(struct wlr_ext_workspace_handle_v1 *handle)
+{
+	if (!handle || !handle->data) {
+		return NULL;
+	}
+	if (per_output) {
+		return ((struct workspace_output_handle *)handle->data)->workspace;
+	}
+	return handle->data;
+}
+
 static void
 handle_ext_workspace_commit(struct wl_listener *listener, void *data)
 {
@@ -252,6 +294,18 @@ handle_ext_workspace_commit(struct wl_listener *listener, void *data)
 
 	struct wlr_ext_workspace_v1_request *req;
 	wl_list_for_each(req, event->requests, link) {
+		if (req->type == WLR_EXT_WORKSPACE_V1_REQUEST_CREATE_WORKSPACE) {
+			create_dynamic_workspace(req->create_workspace.name);
+			continue;
+		}
+		if (req->type == WLR_EXT_WORKSPACE_V1_REQUEST_REMOVE) {
+			struct workspace *workspace =
+				request_workspace(req->remove.workspace);
+			if (workspace) {
+				remove_workspace(workspace);
+			}
+			continue;
+		}
 		if (req->type != WLR_EXT_WORKSPACE_V1_REQUEST_ACTIVATE) {
 			continue;
 		}
@@ -276,7 +330,8 @@ ext_global_add_workspace(struct workspace *workspace)
 {
 	workspace->ext_workspace = wlr_ext_workspace_handle_v1_create(
 		server.workspaces.ext_manager, /*id*/ NULL,
-		EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE);
+		EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE
+		| EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_REMOVE);
 	workspace->ext_workspace->data = workspace;
 	wlr_ext_workspace_handle_v1_set_group(
 		workspace->ext_workspace, server.workspaces.ext_group);
@@ -294,7 +349,8 @@ ext_output_add_workspace(struct output *output, struct workspace *workspace)
 	handle->output = output;
 	handle->ext_workspace = wlr_ext_workspace_handle_v1_create(
 		server.workspaces.ext_manager, /*id*/ NULL,
-		EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE);
+		EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_ACTIVATE
+		| EXT_WORKSPACE_HANDLE_V1_WORKSPACE_CAPABILITIES_REMOVE);
 	handle->ext_workspace->data = handle;
 	wlr_ext_workspace_handle_v1_set_group(handle->ext_workspace,
 		output->workspace_group);
@@ -320,7 +376,8 @@ ext_output_create(struct output *output)
 		return;
 	}
 	output->workspace_group = wlr_ext_workspace_group_handle_v1_create(
-		server.workspaces.ext_manager, /*caps*/ 0);
+		server.workspaces.ext_manager,
+		EXT_WORKSPACE_GROUP_HANDLE_V1_GROUP_CAPABILITIES_CREATE_WORKSPACE);
 	wlr_ext_workspace_group_handle_v1_output_enter(
 		output->workspace_group, output->wlr_output);
 	struct workspace *workspace;
@@ -352,7 +409,8 @@ static void
 ext_global_create(void)
 {
 	server.workspaces.ext_group = wlr_ext_workspace_group_handle_v1_create(
-		server.workspaces.ext_manager, /*caps*/ 0);
+		server.workspaces.ext_manager,
+		EXT_WORKSPACE_GROUP_HANDLE_V1_GROUP_CAPABILITIES_CREATE_WORKSPACE);
 	struct workspace *workspace;
 	wl_list_for_each(workspace, &server.workspaces.all, link) {
 		ext_global_add_workspace(workspace);
@@ -411,7 +469,7 @@ active_output(void)
 }
 
 /* Internal API */
-static void
+static struct workspace *
 add_workspace(const char *name)
 {
 	struct workspace *workspace = znew(*workspace);
@@ -429,10 +487,10 @@ add_workspace(const char *name)
 
 	if (!per_output) {
 		ext_global_add_workspace(workspace);
-		return;
+		return workspace;
 	}
 	if (!server.outputs.next) {
-		return;
+		return workspace;
 	}
 	struct output *output;
 	wl_list_for_each(output, &server.outputs, link) {
@@ -440,6 +498,7 @@ add_workspace(const char *name)
 			ext_output_add_workspace(output, workspace);
 		}
 	}
+	return workspace;
 }
 
 static struct workspace *
@@ -590,7 +649,8 @@ workspaces_init(void)
 	per_output = rc.workspace_config.per_output;
 	if (!per_output) {
 		server.workspaces.ext_group = wlr_ext_workspace_group_handle_v1_create(
-			server.workspaces.ext_manager, /*caps*/ 0);
+			server.workspaces.ext_manager,
+		EXT_WORKSPACE_GROUP_HANDLE_V1_GROUP_CAPABILITIES_CREATE_WORKSPACE);
 	}
 
 	server.workspaces.on_ext_manager.commit.notify = handle_ext_workspace_commit;
@@ -1364,6 +1424,42 @@ destroy_workspace(struct workspace *workspace)
 	free(workspace);
 }
 
+static void
+remove_workspace(struct workspace *workspace)
+{
+	if (wl_list_length(&server.workspaces.all) < 2) {
+		return;
+	}
+	struct workspace *fallback = workspace->link.prev != &server.workspaces.all
+		? wl_container_of(workspace->link.prev, fallback, link)
+		: wl_container_of(workspace->link.next, fallback, link);
+
+	overlay_finish(&server.seat);
+	struct view *view;
+	wl_list_for_each(view, &server.views, link) {
+		if (view->workspace == workspace) {
+			view_move_to_workspace(view, fallback);
+		}
+	}
+	struct output *output;
+	wl_list_for_each(output, &server.outputs, link) {
+		if (output->workspace_current == workspace) {
+			workspaces_switch_output(output, fallback, /* update_focus */ true);
+		}
+		if (output->workspace_last == workspace) {
+			output->workspace_last = fallback;
+		}
+	}
+	if (server.workspaces.current == workspace) {
+		workspaces_switch_to(fallback, /* update_focus */ true);
+	}
+	if (server.workspaces.last == workspace) {
+		server.workspaces.last = fallback;
+	}
+	wlr_log(WLR_INFO, "removed workspace %s", workspace->name);
+	destroy_workspace(workspace);
+}
+
 void
 workspaces_reconfigure(void)
 {
@@ -1419,6 +1515,10 @@ workspaces_reconfigure(void)
 	while (workspace_link != &server.workspaces.all) {
 		struct workspace *workspace = wl_container_of(
 			workspace_link, workspace, link);
+		if (workspace->dynamic) {
+			workspace_link = workspace_link->next;
+			continue;
+		}
 
 		wlr_log(WLR_DEBUG, "Destroying workspace \"%s\"",
 			workspace->name);
