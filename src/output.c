@@ -640,6 +640,7 @@ configure_new_output(struct output *output)
 	 */
 	/* A fresh scene_output has needs_frame false; the commit binds no CRTC. */
 	wlr_output_schedule_frame(wlr_output);
+	singularity_splash_maybe_show(output);
 	lab_wlr_scene_output_commit(output->scene_output, &output->pending);
 
 	/*
