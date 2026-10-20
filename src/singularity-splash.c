@@ -104,25 +104,21 @@ brand_layout(double width, double height, double scale, struct brand_layout *out
 		scale = 1.0;
 	}
 	double pw = width * scale, ph = height * scale;
-	double k = ph >= 2000.0 ? 2.0 : (ph >= 1400.0 ? 1.5 : 1.0);
-	double size = floor(256.0 * k);
-	if (size > pw * 0.5) {
-		size = floor(pw * 0.5);
-	}
-	if (size > ph * 0.5) {
-		size = floor(ph * 0.5);
+	double size = fmax(64.0, floor(ph * 0.12));
+	if (size > pw * 0.25) {
+		size = floor(pw * 0.25);
 	}
 	double top = floor((ph - size) / 2.0);
 	double left = floor((pw - size) / 2.0);
-	double bar_w = floor(size * 220.0 / 256.0);
-	double bar_h = fmax(2.0, floor(size / 64.0));
+	double bar_w = floor(size * 1.4);
+	double bar_h = fmax(2.0, floor(size / 48.0));
 	out->logo_size = size / scale;
 	out->logo_x = left / scale;
 	out->logo_y = top / scale;
 	out->bar_w = bar_w / scale;
 	out->bar_h = bar_h / scale;
 	out->bar_x = floor((pw - bar_w) / 2.0) / scale;
-	out->bar_y = (top + size + floor(size * 48.0 / 256.0)) / scale;
+	out->bar_y = (top + size + floor(size * 0.45)) / scale;
 }
 
 static void
