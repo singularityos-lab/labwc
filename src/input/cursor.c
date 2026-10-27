@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #define _POSIX_C_SOURCE 200809L
 #include "input/cursor.h"
+#include "app-pause.h"
 #include <assert.h>
 #include <time.h>
 #include <wlr/config.h>
@@ -1192,6 +1193,18 @@ cursor_process_button_press(struct seat *seat, uint32_t button, uint32_t time_ms
 
 	/* Used on next button release to check if it can close menu or select menu item */
 	press_msec = time_msec;
+
+	if (server.input_mode == LAB_INPUT_STATE_PASSTHROUGH
+			&& app_pause_view_is_paused(ctx.view)
+			&& (ctx.type == LAB_NODE_RESUME_BUTTON
+				|| ctx.type == LAB_NODE_NONE)) {
+		desktop_focus_view(ctx.view, /* raise */ true);
+		if (ctx.type == LAB_NODE_RESUME_BUTTON) {
+			app_pause_request_resume(ctx.view);
+		}
+		lab_set_add(&seat->bound_buttons, button);
+		return false;
+	}
 
 	if (ctx.view || ctx.surface) {
 		/* Store cursor context for later action processing */

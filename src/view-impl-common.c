@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /* view-impl-common.c: common code for shell view->impl functions */
 #include "view-impl-common.h"
+#include "app-pause.h"
 #include "foreign-toplevel/foreign.h"
 #include "labwc.h"
 #include "protocols/singularity-tiling.h"
@@ -48,6 +49,8 @@ view_impl_map(struct view *view)
 		}
 	}
 
+	app_pause_view_mapped(view);
+
 	wlr_log(WLR_DEBUG, "[map] identifier=%s, title=%s",
 		view->app_id, view->title);
 }
@@ -55,6 +58,7 @@ view_impl_map(struct view *view)
 void
 view_impl_unmap(struct view *view)
 {
+	app_pause_view_unmapped(view);
 	view_update_visibility(view);
 
 	/*

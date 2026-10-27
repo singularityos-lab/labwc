@@ -31,6 +31,7 @@ labwc_sources = files(
   'session-lock.c',
   'show-desktop.c',
   'singularity-splash.c',
+  'app-pause.c',
   'snap-constraints.c',
   'snap.c',
   'tearing.c',

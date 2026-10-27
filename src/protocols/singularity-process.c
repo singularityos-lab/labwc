@@ -5,12 +5,14 @@
 #include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include "labwc.h"
 #include "singularity-process-unstable-v1-protocol.h"
+#include "foreign-toplevel/foreign.h"
 #include "view.h"
 #if HAVE_XWAYLAND
 #include <wlr/xwayland.h>
 #endif
 
 static struct wl_global *process_global;
+static struct wl_list managers;
 
 static bool
 pid_is_xwayland(pid_t pid)
@@ -63,6 +65,12 @@ static const struct zsingularity_process_manager_v1_interface manager_impl = {
 };
 
 static void
+handle_resource_destroy(struct wl_resource *resource)
+{
+	wl_list_remove(wl_resource_get_link(resource));
+}
+
+static void
 bind_manager(struct wl_client *client, void *data, uint32_t version,
 	uint32_t id)
 {
@@ -72,12 +80,43 @@ bind_manager(struct wl_client *client, void *data, uint32_t version,
 		wl_client_post_no_memory(client);
 		return;
 	}
-	wl_resource_set_implementation(resource, &manager_impl, NULL, NULL);
+	wl_resource_set_implementation(resource, &manager_impl, NULL,
+		handle_resource_destroy);
+	wl_list_insert(&managers, wl_resource_get_link(resource));
 }
 
 void
 singularity_process_init(void)
 {
+	wl_list_init(&managers);
 	process_global = wl_global_create(server.wl_display,
-		&zsingularity_process_manager_v1_interface, 1, NULL, bind_manager);
+		&zsingularity_process_manager_v1_interface, 2, NULL, bind_manager);
+}
+
+bool
+singularity_process_request_resume(struct view *view)
+{
+	struct wlr_foreign_toplevel_handle_v1 *handle =
+		foreign_toplevel_get_handle(view->foreign_toplevel);
+	if (!handle) {
+		return false;
+	}
+	bool sent = false;
+	struct wl_resource *manager;
+	wl_resource_for_each(manager, &managers) {
+		if (wl_resource_get_version(manager)
+				< ZSINGULARITY_PROCESS_MANAGER_V1_RESUME_REQUESTED_SINCE_VERSION) {
+			continue;
+		}
+		struct wl_client *client = wl_resource_get_client(manager);
+		struct wl_resource *toplevel;
+		wl_resource_for_each(toplevel, &handle->resources) {
+			if (wl_resource_get_client(toplevel) == client) {
+				zsingularity_process_manager_v1_send_resume_requested(
+					manager, toplevel);
+				sent = true;
+			}
+		}
+	}
+	return sent;
 }

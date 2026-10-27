@@ -3,12 +3,14 @@
 #include <assert.h>
 #include <drm_fourcc.h>
 #include <math.h>
+#include <stdlib.h>
 #include <wlr/render/allocator.h>
 #include <wlr/render/drm_format_set.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/render/wlr_texture.h>
 #include <wlr/types/wlr_buffer.h>
 #include <scenefx/types/wlr_scene.h>
+#include "buffer.h"
 #include "common/mem.h"
 #include "common/scene-helpers.h"
 #include "config/rcxml.h"
@@ -45,9 +47,20 @@ struct view_animation {
 	double fade_fraction;
 };
 
+static struct wlr_box
+scale_box(int x, int y, int width, int height, float scale)
+{
+	return (struct wlr_box){
+		.x = lroundf(x * scale),
+		.y = lroundf(y * scale),
+		.width = lroundf(width * scale),
+		.height = lroundf(height * scale),
+	};
+}
+
 static void
 render_node(struct wlr_render_pass *pass,
-		struct wlr_scene_node *node, int x, int y,
+		struct wlr_scene_node *node, int x, int y, float scale,
 		struct wl_array *textures, bool root,
 		struct wlr_scene_node *force_node, bool forced)
 {
@@ -64,7 +77,7 @@ render_node(struct wlr_render_pass *pass,
 		struct wlr_scene_tree *tree = wlr_scene_tree_from_node(node);
 		struct wlr_scene_node *child;
 		wl_list_for_each(child, &tree->children, link) {
-			render_node(pass, child, x, y, textures, false,
+			render_node(pass, child, x, y, scale, textures, false,
 				force_node, forced);
 		}
 		break;
@@ -72,12 +85,7 @@ render_node(struct wlr_render_pass *pass,
 	case WLR_SCENE_NODE_RECT: {
 		struct wlr_scene_rect *rect = wlr_scene_rect_from_node(node);
 		wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
-			.box = {
-				.x = x,
-				.y = y,
-				.width = rect->width,
-				.height = rect->height,
-			},
+			.box = scale_box(x, y, rect->width, rect->height, scale),
 			.color = {
 				.r = rect->color[0],
 				.g = rect->color[1],
@@ -118,12 +126,8 @@ render_node(struct wlr_render_pass *pass,
 		wlr_render_pass_add_texture(pass, &(struct wlr_render_texture_options){
 			.texture = texture,
 			.src_box = scene_buffer->src_box,
-			.dst_box = {
-				.x = x,
-				.y = y,
-				.width = scene_buffer->dst_width,
-				.height = scene_buffer->dst_height,
-			},
+			.dst_box = scale_box(x, y, scene_buffer->dst_width,
+				scene_buffer->dst_height, scale),
 			.alpha = &scene_buffer->opacity,
 			.transform = scene_buffer->transform,
 			.filter_mode = scene_buffer->filter_mode,
@@ -134,8 +138,9 @@ render_node(struct wlr_render_pass *pass,
 }
 
 static struct wlr_buffer *
-render_view_snapshot(struct view *view,
-		struct wlr_color_transform *color_transform, bool include_unmapped)
+render_view_snapshot_scaled(struct view *view,
+		struct wlr_color_transform *color_transform, bool include_unmapped,
+		float scale)
 {
 	struct wlr_box box = ssd_max_extents(view);
 	const struct wlr_drm_format_set *formats =
@@ -153,8 +158,10 @@ render_view_snapshot(struct view *view,
 	if (!format) {
 		return NULL;
 	}
+	int width = lroundf(box.width * scale);
+	int height = lroundf(box.height * scale);
 	struct wlr_buffer *buffer = wlr_allocator_create_buffer(server.allocator,
-		box.width, box.height, format);
+		width, height, format);
 	if (!buffer) {
 		return NULL;
 	}
@@ -168,7 +175,7 @@ render_view_snapshot(struct view *view,
 		return NULL;
 	}
 	wlr_render_pass_add_rect(pass, &(struct wlr_render_rect_options){
-		.box = { .width = box.width, .height = box.height },
+		.box = { .width = width, .height = height },
 		.color = {0},
 		.blend_mode = WLR_RENDER_BLEND_MODE_NONE,
 	});
@@ -177,7 +184,7 @@ render_view_snapshot(struct view *view,
 	struct wlr_scene_node *force_node = include_unmapped && view->content_tree
 		? &view->content_tree->node : NULL;
 	render_node(pass, &view->scene_tree->node,
-		-box.x, -box.y, &textures, true, force_node, false);
+		-box.x, -box.y, scale, &textures, true, force_node, false);
 	bool submitted = wlr_render_pass_submit(pass);
 	struct wlr_texture **texture;
 	wl_array_for_each(texture, &textures) {
@@ -189,6 +196,54 @@ render_view_snapshot(struct view *view,
 		return NULL;
 	}
 	return buffer;
+}
+
+static struct wlr_buffer *
+render_view_snapshot(struct view *view,
+		struct wlr_color_transform *color_transform, bool include_unmapped)
+{
+	return render_view_snapshot_scaled(view, color_transform,
+		include_unmapped, 1.0f);
+}
+
+struct wlr_buffer *
+view_render_grayscale_snapshot(struct view *view, float scale)
+{
+	struct wlr_buffer *color = render_view_snapshot_scaled(view, NULL,
+		false, scale);
+	if (!color) {
+		return NULL;
+	}
+	struct wlr_texture *texture =
+		wlr_texture_from_buffer(server.renderer, color);
+	int width = color->width;
+	int height = color->height;
+	wlr_buffer_drop(color);
+	if (!texture) {
+		return NULL;
+	}
+	uint32_t stride = width * 4;
+	uint8_t *data = malloc((size_t)stride * height);
+	bool ok = data && wlr_texture_read_pixels(texture,
+		&(struct wlr_texture_read_pixels_options){
+			.data = data,
+			.format = DRM_FORMAT_ARGB8888,
+			.stride = stride,
+		});
+	wlr_texture_destroy(texture);
+	if (!ok) {
+		free(data);
+		return NULL;
+	}
+	for (size_t i = 0; i < (size_t)width * height; i++) {
+		uint8_t *px = data + i * 4;
+		uint8_t gray = (uint8_t)(0.0722f * px[0] + 0.7152f * px[1]
+			+ 0.2126f * px[2] + 0.5f);
+		px[0] = px[1] = px[2] = gray;
+	}
+	struct lab_data_buffer *buffer =
+		buffer_create_from_data(data, width, height, stride);
+	return buffer ? &buffer->base : NULL;
 }
 
 static struct wlr_buffer *

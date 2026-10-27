@@ -206,6 +206,12 @@ struct view {
 	bool singularity_scrolling_tiled;
 	enum ssd_preference ssd_preference;
 	bool shaded;
+
+	struct {
+		char *cgroup;
+		bool frozen;
+		struct wlr_scene_tree *tree;
+	} pause;
 	bool minimized;
 	bool was_minimized_by_show_desktop_action;
 	bool stage_target_valid;

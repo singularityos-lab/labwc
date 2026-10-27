@@ -74,6 +74,7 @@
 #include "idle.h"
 #include "input/keyboard.h"
 #include "labwc.h"
+#include "app-pause.h"
 #include "layers.h"
 #include "magnifier.h"
 #include "menu/menu.h"
@@ -935,6 +936,7 @@ server_init(void)
 	singularity_motion_init();
 	singularity_stage_init();
 	singularity_process_init();
+	app_pause_init();
 
 	wlr_alpha_modifier_v1_create(server.wl_display);
 
@@ -1032,6 +1034,7 @@ server_start(void)
 void
 server_finish(void)
 {
+	app_pause_finish();
 	tablet_state_remove();
 	custom_shaders_finish();
 #if HAVE_XWAYLAND

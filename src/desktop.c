@@ -400,6 +400,11 @@ get_cursor_context(void)
 			case LAB_NODE_IME_POPUP:
 				ret.type = LAB_NODE_CLIENT;
 				return ret;
+			case LAB_NODE_RESUME_BUTTON:
+				ret.node = node;
+				ret.view = desc->view;
+				ret.type = LAB_NODE_RESUME_BUTTON;
+				return ret;
 			case LAB_NODE_MENUITEM:
 				/* Always return the top scene node for menu items */
 				ret.node = node;
