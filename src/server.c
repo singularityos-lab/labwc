@@ -75,6 +75,7 @@
 #include "input/keyboard.h"
 #include "labwc.h"
 #include "app-pause.h"
+#include "background-apps.h"
 #include "layers.h"
 #include "magnifier.h"
 #include "menu/menu.h"
@@ -937,6 +938,7 @@ server_init(void)
 	singularity_stage_init();
 	singularity_process_init();
 	app_pause_init();
+	background_apps_init();
 
 	wlr_alpha_modifier_v1_create(server.wl_display);
 
@@ -1035,6 +1037,7 @@ void
 server_finish(void)
 {
 	app_pause_finish();
+	background_apps_finish();
 	tablet_state_remove();
 	custom_shaders_finish();
 #if HAVE_XWAYLAND

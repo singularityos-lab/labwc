@@ -212,6 +212,11 @@ struct view {
 		bool frozen;
 		struct wlr_scene_tree *tree;
 	} pause;
+	struct {
+		char *cgroup;
+		int64_t hidden_since;
+		bool suspended;
+	} background;
 	bool minimized;
 	bool was_minimized_by_show_desktop_action;
 	bool stage_target_valid;

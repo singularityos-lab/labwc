@@ -2,6 +2,7 @@
 /* view-impl-common.c: common code for shell view->impl functions */
 #include "view-impl-common.h"
 #include "app-pause.h"
+#include "background-apps.h"
 #include "foreign-toplevel/foreign.h"
 #include "labwc.h"
 #include "protocols/singularity-tiling.h"
@@ -59,6 +60,7 @@ void
 view_impl_unmap(struct view *view)
 {
 	app_pause_view_unmapped(view);
+	background_apps_view_unmapped(view);
 	view_update_visibility(view);
 
 	/*
