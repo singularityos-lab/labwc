@@ -504,7 +504,8 @@ map_pointer_to_output(struct seat *seat, struct wlr_input_device *dev)
 static const char *const consent_app_ids[] = {
 	"dev.sinty.portal.consent",
 	"dev.sinty.screencast.chooser",
-	"dev.sinty.polkit",
+	"dev.sinty.PolkitAuthHelper",
+	"dev.sinty.keyring",
 	"zenity",
 };
 
