@@ -497,6 +497,44 @@ map_pointer_to_output(struct seat *seat, struct wlr_input_device *dev)
 	map_input_to_output(seat, dev, pointer->output_name);
 }
 
+/*
+ * Synthetic input must never answer for the user: not on the lock screen and
+ * not while a window that asks for consent is open.
+ */
+static const char *const consent_app_ids[] = {
+	"dev.sinty.portal.consent",
+	"dev.sinty.screencast.chooser",
+	"dev.sinty.polkit",
+	"zenity",
+};
+
+bool
+input_virtual_blocked(void)
+{
+	if (server.session_lock_manager->locked) {
+		return true;
+	}
+	struct view *view;
+	wl_list_for_each(view, &server.views, link) {
+		if (!view->mapped || !view->app_id) {
+			continue;
+		}
+		for (size_t i = 0; i < ARRAY_SIZE(consent_app_ids); i++) {
+			if (!strcmp(view->app_id, consent_app_ids[i])) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+bool
+input_pointer_blocked(struct wlr_pointer *pointer)
+{
+	struct input *input = pointer->base.data;
+	return input && input->is_virtual && input_virtual_blocked();
+}
+
 static struct input *
 new_pointer(struct seat *seat, struct wlr_input_device *dev)
 {
@@ -689,6 +727,7 @@ handle_new_virtual_pointer(struct wl_listener *listener, void *data)
 
 	struct input *input = new_pointer(seat, device);
 	device->data = input;
+	input->is_virtual = true;
 	seat_add_device(seat, input);
 	if (event->suggested_output) {
 		wlr_cursor_map_input_to_output(seat->cursor, device,

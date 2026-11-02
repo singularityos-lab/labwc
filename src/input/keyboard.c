@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #define _POSIX_C_SOURCE 200809L
 #include "input/keyboard.h"
+#include "input/input.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <wlr/config.h>
@@ -703,6 +704,9 @@ handle_key(struct wl_listener *listener, void *data)
 	struct keyboard *keyboard = wl_container_of(listener, keyboard, key);
 	struct wlr_keyboard_key_event *event = data;
 
+	if (keyboard->is_virtual && input_virtual_blocked()) {
+		return;
+	}
 	if (keyboard->accessx_swallow) {
 		keyboard->accessx_swallow = false;
 		keyboard_cancel_keybind_repeat(keyboard);

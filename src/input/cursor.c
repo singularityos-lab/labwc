@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #define _POSIX_C_SOURCE 200809L
 #include "input/cursor.h"
+#include "input/input.h"
 #include "app-pause.h"
 #include <assert.h>
 #include <time.h>
@@ -966,6 +967,9 @@ handle_motion(struct wl_listener *listener, void *data)
 	 */
 	struct seat *seat = wl_container_of(listener, seat, on_cursor.motion);
 	struct wlr_pointer_motion_event *event = data;
+	if (input_pointer_blocked(event->pointer)) {
+		return;
+	}
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
 
@@ -1020,6 +1024,9 @@ handle_motion_absolute(struct wl_listener *listener, void *data)
 	 */
 	struct seat *seat = wl_container_of(listener, seat, on_cursor.motion_absolute);
 	struct wlr_pointer_motion_absolute_event *event = data;
+	if (input_pointer_blocked(event->pointer)) {
+		return;
+	}
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
 
@@ -1354,6 +1361,9 @@ handle_button(struct wl_listener *listener, void *data)
 	 */
 	struct seat *seat = wl_container_of(listener, seat, on_cursor.button);
 	struct wlr_pointer_button_event *event = data;
+	if (input_pointer_blocked(event->pointer)) {
+		return;
+	}
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
 
@@ -1505,6 +1515,9 @@ handle_axis(struct wl_listener *listener, void *data)
 	 */
 	struct seat *seat = wl_container_of(listener, seat, on_cursor.axis);
 	struct wlr_pointer_axis_event *event = data;
+	if (input_pointer_blocked(event->pointer)) {
+		return;
+	}
 	idle_manager_notify_activity(seat->wlr_seat);
 	cursor_set_visible(seat, /* visible */ true);
 

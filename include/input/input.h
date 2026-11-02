@@ -4,6 +4,8 @@
 
 #include <wayland-server-core.h>
 
+struct wlr_pointer;
+
 struct input {
 	struct wlr_input_device *wlr_input_device;
 	struct seat *seat;
@@ -11,9 +13,13 @@ struct input {
 	double scroll_factor;
 	struct wl_listener destroy;
 	struct wl_list link; /* seat.inputs */
+	bool is_virtual;
 };
 
 void input_handlers_init(struct seat *seat);
 void input_handlers_finish(struct seat *seat);
+
+bool input_virtual_blocked(void);
+bool input_pointer_blocked(struct wlr_pointer *pointer);
 
 #endif /* LABWC_INPUT_H */
