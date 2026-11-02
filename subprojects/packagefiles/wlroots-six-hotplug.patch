@@ -1,3 +1,90 @@
+diff --git a/backend/libinput/backend.c b/backend/libinput/backend.c
+index 121731b3..00f2c017 100644
+--- a/backend/libinput/backend.c
++++ b/backend/libinput/backend.c
+@@ -2,6 +2,7 @@
+ #include <libinput.h>
+ #include <stdlib.h>
+ #include <stdio.h>
++#include <unistd.h>
+ #include <wlr/backend/interface.h>
+ #include <wlr/backend/session.h>
+ #include <wlr/util/log.h>
+@@ -82,19 +83,47 @@ static void log_libinput(struct libinput *libinput_context,
+ 	_wlr_vlog(importance, wlr_fmt, args);
+ }
+ 
++#define SCAN_INTERVAL_MS 2000
++
++static int handle_scan_timer(void *data) {
++	struct wlr_libinput_backend *backend = data;
++	char path[32];
++	for (int i = 0; i < WLR_LIBINPUT_SCAN_SLOTS; i++) {
++		snprintf(path, sizeof(path), "/dev/input/event%d", i);
++		if (access(path, F_OK) != 0) {
++			backend->scan_seen[i] = false;
++			continue;
++		}
++		if (!backend->scan_seen[i] && access(path, R_OK) == 0) {
++			backend->scan_seen[i] = true;
++			libinput_path_add_device(backend->libinput_context, path);
++		}
++	}
++	handle_libinput_readable(libinput_get_fd(backend->libinput_context),
++		WL_EVENT_READABLE, backend);
++	wl_event_source_timer_update(backend->scan_timer, SCAN_INTERVAL_MS);
++	return 0;
++}
++
+ static bool backend_start(struct wlr_backend *wlr_backend) {
+ 	struct wlr_libinput_backend *backend =
+ 		get_libinput_backend_from_backend(wlr_backend);
+ 	wlr_log(WLR_DEBUG, "Starting libinput backend");
+ 
+-	backend->libinput_context = libinput_udev_create_context(&libinput_impl,
+-		backend, backend->session->udev);
++	backend->scan_nodes = access("/dev/dri/sixhotplug", F_OK) == 0;
++	if (backend->scan_nodes) {
++		backend->libinput_context = libinput_path_create_context(&libinput_impl,
++			backend);
++	} else {
++		backend->libinput_context = libinput_udev_create_context(&libinput_impl,
++			backend, backend->session->udev);
++	}
+ 	if (!backend->libinput_context) {
+ 		wlr_log(WLR_ERROR, "Failed to create libinput context");
+ 		return false;
+ 	}
+ 
+-	if (libinput_udev_assign_seat(backend->libinput_context,
++	if (!backend->scan_nodes && libinput_udev_assign_seat(backend->libinput_context,
+ 			backend->session->seat) != 0) {
+ 		wlr_log(WLR_ERROR, "Failed to assign libinput seat");
+ 		return false;
+@@ -122,6 +151,13 @@ static bool backend_start(struct wlr_backend *wlr_backend) {
+ 		wlr_log(WLR_ERROR, "Failed to create input event on event loop");
+ 		return false;
+ 	}
++	if (backend->scan_nodes) {
++		backend->scan_timer = wl_event_loop_add_timer(backend->session->event_loop,
++			handle_scan_timer, backend);
++		if (backend->scan_timer) {
++			handle_scan_timer(backend);
++		}
++	}
+ 	wlr_log(WLR_DEBUG, "libinput successfully initialized");
+ 	return true;
+ }
+@@ -143,6 +179,9 @@ static void backend_destroy(struct wlr_backend *wlr_backend) {
+ 	wl_list_remove(&backend->session_destroy.link);
+ 	wl_list_remove(&backend->session_signal.link);
+ 
++	if (backend->scan_timer) {
++		wl_event_source_remove(backend->scan_timer);
++	}
+ 	if (backend->input_event) {
+ 		wl_event_source_remove(backend->input_event);
+ 	}
 diff --git a/backend/session/session.c b/backend/session/session.c
 index 86877439..dc75831f 100644
 --- a/backend/session/session.c
@@ -58,6 +145,24 @@ index 86877439..dc75831f 100644
  	wl_event_source_remove(session->udev_event);
  	udev_monitor_unref(session->mon);
  	udev_unref(session->udev);
+diff --git a/include/backend/libinput.h b/include/backend/libinput.h
+index e7123884..4d2250a1 100644
+--- a/include/backend/libinput.h
++++ b/include/backend/libinput.h
+@@ -12,7 +12,13 @@
+ #include <wlr/types/wlr_tablet_tool.h>
+ #include <wlr/types/wlr_touch.h>
+ 
++#define WLR_LIBINPUT_SCAN_SLOTS 32
++
+ struct wlr_libinput_backend {
++	bool scan_nodes;
++	struct wl_event_source *scan_timer;
++	bool scan_seen[WLR_LIBINPUT_SCAN_SLOTS];
++
+ 	struct wlr_backend backend;
+ 
+ 	struct wlr_session *session;
 diff --git a/include/wlr/backend/session.h b/include/wlr/backend/session.h
 index a1ff0c31..5016481e 100644
 --- a/include/wlr/backend/session.h
