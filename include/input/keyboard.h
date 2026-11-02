@@ -17,6 +17,7 @@ struct keyboard {
 	struct input base;
 	struct wlr_keyboard *wlr_keyboard;
 	bool is_virtual;
+	bool stands_for_hardware;
 	struct wl_listener modifiers;
 	struct wl_listener key;
 	struct wl_listener accessx_key;

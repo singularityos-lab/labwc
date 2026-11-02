@@ -533,7 +533,8 @@ bool
 input_pointer_blocked(struct wlr_pointer *pointer)
 {
 	struct input *input = pointer->base.data;
-	return input && input->is_virtual && input_virtual_blocked();
+	return input && input->is_virtual && !input->stands_for_hardware
+		&& input_virtual_blocked();
 }
 
 static struct input *
@@ -718,6 +719,18 @@ handle_new_input(struct wl_listener *listener, void *data)
 	seat_add_device(seat, input);
 }
 
+/*
+ * Only root may stand in for hardware: SIX forwards the physical devices
+ * through a system service. Session processes stay subject to the block.
+ */
+static bool
+virtual_input_is_hardware(struct wl_resource *resource)
+{
+	uid_t uid = -1;
+	wl_client_get_credentials(wl_resource_get_client(resource), NULL, &uid, NULL);
+	return uid == 0;
+}
+
 static void
 handle_new_virtual_pointer(struct wl_listener *listener, void *data)
 {
@@ -729,6 +742,7 @@ handle_new_virtual_pointer(struct wl_listener *listener, void *data)
 	struct input *input = new_pointer(seat, device);
 	device->data = input;
 	input->is_virtual = true;
+	input->stands_for_hardware = virtual_input_is_hardware(pointer->resource);
 	seat_add_device(seat, input);
 	if (event->suggested_output) {
 		wlr_cursor_map_input_to_output(seat->cursor, device,
@@ -744,6 +758,8 @@ handle_new_virtual_keyboard(struct wl_listener *listener, void *data)
 	struct wlr_input_device *device = &virtual_keyboard->keyboard.base;
 
 	struct input *input = new_keyboard(seat, device, true);
+	struct keyboard *keyboard = wl_container_of(input, keyboard, base);
+	keyboard->stands_for_hardware = virtual_input_is_hardware(virtual_keyboard->resource);
 	device->data = input;
 	seat_add_device(seat, input);
 }

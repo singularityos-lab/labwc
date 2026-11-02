@@ -14,6 +14,7 @@ struct input {
 	struct wl_listener destroy;
 	struct wl_list link; /* seat.inputs */
 	bool is_virtual;
+	bool stands_for_hardware;
 };
 
 void input_handlers_init(struct seat *seat);

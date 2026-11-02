@@ -704,7 +704,8 @@ handle_key(struct wl_listener *listener, void *data)
 	struct keyboard *keyboard = wl_container_of(listener, keyboard, key);
 	struct wlr_keyboard_key_event *event = data;
 
-	if (keyboard->is_virtual && input_virtual_blocked()) {
+	if (keyboard->is_virtual && !keyboard->stands_for_hardware
+			&& input_virtual_blocked()) {
 		return;
 	}
 	if (keyboard->accessx_swallow) {
