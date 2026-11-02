@@ -1,0 +1,73 @@
+diff --git a/backend/session/session.c b/backend/session/session.c
+index 86877439..dc75831f 100644
+--- a/backend/session/session.c
++++ b/backend/session/session.c
+@@ -1,4 +1,5 @@
+ #include <assert.h>
++#include <fcntl.h>
+ #include <libudev.h>
+ #include <stdarg.h>
+ #include <stddef.h>
+@@ -242,6 +243,22 @@ out:
+ 	return 1;
+ }
+ 
++static int handle_hotplug_node(int fd, uint32_t mask, void *data) {
++	struct wlr_session *session = data;
++	uint32_t seq;
++	if (read(fd, &seq, sizeof(seq)) != sizeof(seq)) {
++		return 1;
++	}
++	struct wlr_device *dev;
++	wl_list_for_each(dev, &session->devices, link) {
++		struct wlr_device_change_event event = {
++			.type = WLR_DEVICE_HOTPLUG,
++		};
++		wl_signal_emit_mutable(&dev->events.change, &event);
++	}
++	return 1;
++}
++
+ static void handle_event_loop_destroy(struct wl_listener *listener, void *data) {
+ 	struct wlr_session *session =
+ 		wl_container_of(listener, session, event_loop_destroy);
+@@ -290,6 +307,13 @@ struct wlr_session *wlr_session_create(struct wl_event_loop *event_loop) {
+ 		goto error_mon;
+ 	}
+ 
++	session->hotplug_fd = open("/dev/dri/sixhotplug",
++		O_RDONLY | O_NONBLOCK | O_CLOEXEC);
++	if (session->hotplug_fd >= 0) {
++		session->hotplug_event = wl_event_loop_add_fd(event_loop,
++			session->hotplug_fd, WL_EVENT_READABLE, handle_hotplug_node, session);
++	}
++
+ 	session->event_loop_destroy.notify = handle_event_loop_destroy;
+ 	wl_event_loop_add_destroy_listener(event_loop, &session->event_loop_destroy);
+ 
+@@ -319,6 +343,12 @@ void wlr_session_destroy(struct wlr_session *session) {
+ 
+ 	wl_list_remove(&session->event_loop_destroy.link);
+ 
++	if (session->hotplug_event != NULL) {
++		wl_event_source_remove(session->hotplug_event);
++	}
++	if (session->hotplug_fd >= 0) {
++		close(session->hotplug_fd);
++	}
+ 	wl_event_source_remove(session->udev_event);
+ 	udev_monitor_unref(session->mon);
+ 	udev_unref(session->udev);
+diff --git a/include/wlr/backend/session.h b/include/wlr/backend/session.h
+index a1ff0c31..5016481e 100644
+--- a/include/wlr/backend/session.h
++++ b/include/wlr/backend/session.h
+@@ -48,6 +48,8 @@ struct wlr_session {
+ 	struct udev *udev;
+ 	struct udev_monitor *mon;
+ 	struct wl_event_source *udev_event;
++	int hotplug_fd;
++	struct wl_event_source *hotplug_event;
+ 
+ 	struct libseat *seat_handle;
+ 	struct wl_event_source *libseat_event;

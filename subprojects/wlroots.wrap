@@ -1,6 +1,7 @@
 [wrap-git]
 url = https://gitlab.freedesktop.org/wlroots/wlroots.git
 revision = 0.20
+diff_files = wlroots-six-hotplug.patch
 
 [provide]
 dependency_names = wlroots-0.20
