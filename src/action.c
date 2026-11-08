@@ -3,6 +3,7 @@
 #include "action.h"
 #include <assert.h>
 #include <signal.h>
+#include <ctype.h>
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>
@@ -289,6 +290,27 @@ action_get_actionlist(struct action *action, const char *key)
 	return arg ? &arg->value : NULL;
 }
 
+bool action_untrusted;
+
+static bool
+untrusted_command_allowed(const char *command)
+{
+	static const char prefix[] = "/usr/bin/singularity-shortcut ";
+	if (!command || strncmp(command, prefix, sizeof(prefix) - 1)) {
+		return false;
+	}
+	const char *p = command + sizeof(prefix) - 1;
+	if (!*p) {
+		return false;
+	}
+	for (; *p; p++) {
+		if (!isalnum((unsigned char)*p) && !strchr("_:.-", *p)) {
+			return false;
+		}
+	}
+	return true;
+}
+
 void
 action_arg_from_xml_node(struct action *action, const char *nodename, const char *content)
 {
@@ -305,6 +327,10 @@ action_arg_from_xml_node(struct action *action, const char *nodename, const char
 		 * compatibility with old openbox-menu generators
 		 */
 		if (!strcmp(argument, "command") || !strcmp(argument, "execute")) {
+			if (action_untrusted && !untrusted_command_allowed(content)) {
+				nag_log(WLR_ERROR, "session config may not execute '%s'", content);
+				goto cleanup;
+			}
 			action_arg_add_str(action, "command", content);
 			goto cleanup;
 		}
@@ -572,6 +598,10 @@ action_create(const char *action_name)
 
 	enum action_type action_type = action_type_from_str(action_name);
 	if (action_type == ACTION_TYPE_NONE) {
+		return NULL;
+	}
+	if (action_untrusted && action_type == ACTION_TYPE_EXIT) {
+		nag_log(WLR_ERROR, "session config may not use '%s'", action_name);
 		return NULL;
 	}
 

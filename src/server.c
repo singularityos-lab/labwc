@@ -8,7 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/inotify.h>
 #include <sys/wait.h>
+#include <unistd.h>
 #include <scenefx/render/fx_renderer/fx_renderer.h>
 #include <wlr/backend/headless.h>
 #include <wlr/backend/multi.h>
@@ -168,6 +170,71 @@ handle_sighup(int signal, void *data)
 	reload_config_and_theme();
 	output_virtual_update_fallback();
 	return 0;
+}
+
+static struct wl_event_source *session_rc_timer;
+static const char *session_rc_name;
+
+static int
+handle_session_rc_timer(void *data)
+{
+	handle_sighup(SIGHUP, NULL);
+	return 0;
+}
+
+static int
+handle_session_rc_event(int fd, uint32_t mask, void *data)
+{
+	char buf[4096] __attribute__((aligned(__alignof__(struct inotify_event))));
+	bool hit = false;
+	ssize_t len;
+	while ((len = read(fd, buf, sizeof(buf))) > 0) {
+		for (char *p = buf; p < buf + len;) {
+			struct inotify_event *event = (struct inotify_event *)p;
+			if (event->len && (!strcmp(event->name, session_rc_name)
+					|| !strcmp(event->name, "menu.xml"))) {
+				hit = true;
+			}
+			p += sizeof(*event) + event->len;
+		}
+	}
+	if (hit) {
+		wl_event_source_timer_update(session_rc_timer, 150);
+	}
+	return 0;
+}
+
+static void
+session_rc_watch_init(void)
+{
+	const char *path = getenv("LABWC_SESSION_RC");
+	if (!path || !*path) {
+		return;
+	}
+	const char *slash = strrchr(path, '/');
+	if (!slash || slash == path || !slash[1]) {
+		return;
+	}
+	char *dir = xstrdup(path);
+	dir[slash - path] = '\0';
+	int fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+	if (fd < 0) {
+		free(dir);
+		return;
+	}
+	if (inotify_add_watch(fd, dir, IN_CLOSE_WRITE | IN_MOVED_TO
+			| IN_MOVED_FROM | IN_DELETE) < 0) {
+		wlr_log_errno(WLR_ERROR, "cannot watch %s", dir);
+		close(fd);
+		free(dir);
+		return;
+	}
+	free(dir);
+	session_rc_name = slash + 1;
+	session_rc_timer = wl_event_loop_add_timer(server.wl_event_loop,
+		handle_session_rc_timer, NULL);
+	wl_event_loop_add_fd(server.wl_event_loop, fd, WL_EVENT_READABLE,
+		handle_session_rc_event, NULL);
 }
 
 static int
@@ -625,6 +692,7 @@ server_init(void)
 		server.wl_event_loop, SIGCHLD, handle_sigchld, NULL);
 	server.sigusr1_source = wl_event_loop_add_signal(
 		server.wl_event_loop, SIGUSR1, handle_sigusr1, NULL);
+	session_rc_watch_init();
 
 	/*
 	 * Prevent wayland clients that request the X11 clipboard but closing

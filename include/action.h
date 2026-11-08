@@ -21,6 +21,8 @@ struct action {
 	struct wl_list args;  /* struct action_arg.link */
 };
 
+extern bool action_untrusted;
+
 struct action *action_create(const char *action_name);
 
 const char *action_get_str(struct action *action, const char *key,

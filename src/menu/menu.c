@@ -616,6 +616,10 @@ fill_menu(struct menu *parent, xmlNode *n)
 		wlr_log(WLR_ERROR, "<menu> without id is not allowed");
 		goto error;
 	}
+	if (execute && action_untrusted) {
+		wlr_log(WLR_ERROR, "session menu may not execute '%s'", execute);
+		goto error;
+	}
 
 	if (execute && label) {
 		wlr_log(WLR_DEBUG, "pipemenu '%s:%s:%s'", id, label, execute);
@@ -771,6 +775,20 @@ parse_buf(struct menu *parent, struct buf *buf)
 static void
 parse_xml(const char *filename)
 {
+	const char *session = getenv("LABWC_SESSION_MENU");
+	if (session && *session) {
+		struct buf sb = buf_from_file(session);
+		if (sb.len) {
+			wlr_log(WLR_INFO, "read session menu file %s", session);
+			action_untrusted = true;
+			parse_buf(NULL, &sb);
+			action_untrusted = false;
+			buf_reset(&sb);
+			return;
+		}
+		buf_reset(&sb);
+	}
+
 	struct wl_list paths;
 	paths_config_create(&paths, filename);
 

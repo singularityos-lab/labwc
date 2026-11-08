@@ -2468,6 +2468,24 @@ rcxml_read(const char *filename)
 {
 	rcxml_init();
 
+	const char *session = filename ? NULL : getenv("LABWC_SESSION_RC");
+	if (session && *session) {
+		struct buf sb = buf_from_file(session);
+		if (sb.len) {
+			nag_log(WLR_INFO, "read session config file %s", session);
+			parsing_file = session;
+			action_untrusted = true;
+			rcxml_parse_xml(&sb);
+			action_untrusted = false;
+			parsing_file = NULL;
+			buf_reset(&sb);
+			post_processing();
+			validate();
+			return;
+		}
+		buf_reset(&sb);
+	}
+
 	struct wl_list paths;
 
 	if (filename) {
