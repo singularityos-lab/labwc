@@ -14,7 +14,8 @@
 #include "labwc.h"
 #include "view.h"
 
-#define TICK_MS 250
+#define TICK_MS 1000
+#define IDLE_TICK_MS 5000
 #define SUSPEND_AFTER_MS 3000
 #define BACKGROUND_AFTER_MS 10000
 
@@ -163,7 +164,7 @@ tick(void)
 		return;
 	}
 	state.active = true;
-	if (ticks++ % 8 == 0) {
+	if (ticks++ % 2 == 0) {
 		refresh_cgroups();
 	}
 
@@ -232,7 +233,8 @@ static int
 handle_timer(void *data)
 {
 	tick();
-	wl_event_source_timer_update(state.timer, TICK_MS);
+	wl_event_source_timer_update(state.timer,
+		state.active ? TICK_MS : IDLE_TICK_MS);
 	return 0;
 }
 
