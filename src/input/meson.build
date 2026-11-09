@@ -8,6 +8,7 @@ labwc_sources += files(
   'input.c',
   'keyboard.c',
   'key-state.c',
+  'type-ahead.c',
   'touch.c',
   'ime.c',
 )

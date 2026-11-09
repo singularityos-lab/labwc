@@ -437,6 +437,14 @@ Actions are used in menus and keyboard/mouse bindings.
 	Toggle the screen magnifier on or off at the last magnification level
 	used.
 
+*<action name="BufferKeys" timeout="800" />*
+	Hold back the keys typed from now on that are not bound to a keybind,
+	and hand them to the next surface that receives keyboard focus, so that
+	nothing typed is lost while a launcher or another surface opens. When
+	no other surface takes the focus within *timeout* milliseconds
+	(50 to 3000, default 800), the keys go to the surface that had the
+	focus. Usually placed before an *Execute* that opens such a surface.
+
 *<action name="ToggleShowDesktop" />*
 	Minimize all windows in the current workspace so that the desktop
 	becomes visible. On calling the action again the hidden windows are

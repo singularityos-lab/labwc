@@ -242,6 +242,8 @@ layer_try_set_focus(struct seat *seat, struct wlr_layer_surface_v1 *layer_surfac
 	}
 }
 
+static bool is_above_toplevels(struct wlr_layer_surface_v1 *layer_surface);
+
 static bool
 is_on_demand(struct wlr_layer_surface_v1 *layer_surface)
 {
@@ -286,6 +288,9 @@ handle_surface_commit(struct wl_listener *listener, void *data)
 				 * so we should give us focus.
 				 */
 				try_to_focus_next_layer_or_toplevel();
+			} else if (layer_surface->surface->mapped
+					&& is_above_toplevels(layer_surface)) {
+				layer_try_set_focus(seat, layer_surface);
 			}
 			goto out;
 		}

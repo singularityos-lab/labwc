@@ -17,6 +17,7 @@
 #include "input/accessx.h"
 #include "input/ime.h"
 #include "input/key-state.h"
+#include "input/type-ahead.h"
 #include "labwc.h"
 #include "menu/menu.h"
 #include "protocols/singularity-key-hold.h"
@@ -690,6 +691,8 @@ process_key(struct keyboard *keyboard, struct wlr_keyboard_key_event *event)
 				&& event->state == WL_KEYBOARD_KEY_STATE_PRESSED) {
 			start_keybind_repeat(keyboard, event);
 		}
+	} else if (type_ahead_take(seat, keyboard, event)) {
+		return;
 	} else if (!input_method_keyboard_grab_forward_key(keyboard, event)) {
 		wlr_seat_set_keyboard(wlr_seat, keyboard->wlr_keyboard);
 		wlr_seat_keyboard_notify_key(wlr_seat, event->time_msec,

@@ -23,6 +23,7 @@
 #include "cycle.h"
 #include "debug.h"
 #include "input/keyboard.h"
+#include "input/type-ahead.h"
 #include "input/key-state.h"
 #include "labwc.h"
 #include "magnifier.h"
@@ -141,7 +142,8 @@ struct action_arg_list {
 	X(TOGGLE_SHOW_DESKTOP, "ToggleShowDesktop") \
 	X(WARP_CURSOR, "WarpCursor") \
 	X(HIDE_CURSOR, "HideCursor") \
-	X(DEBUG_TOGGLE_KEY_STATE_INDICATOR, "DebugToggleKeyStateIndicator")
+	X(DEBUG_TOGGLE_KEY_STATE_INDICATOR, "DebugToggleKeyStateIndicator") \
+	X(BUFFER_KEYS, "BufferKeys")
 
 /*
  * Will expand to:
@@ -469,6 +471,12 @@ action_arg_from_xml_node(struct action *action, const char *nodename, const char
 	case ACTION_TYPE_RESIZE_RELATIVE:
 		if (!strcmp(argument, "left") || !strcmp(argument, "right") ||
 				!strcmp(argument, "top") || !strcmp(argument, "bottom")) {
+			action_arg_add_int(action, argument, atoi(content));
+			goto cleanup;
+		}
+		break;
+	case ACTION_TYPE_BUFFER_KEYS:
+		if (!strcmp(argument, "timeout")) {
 			action_arg_add_int(action, argument, atoi(content));
 			goto cleanup;
 		}
@@ -1633,6 +1641,11 @@ run_action(struct view *view, struct action *action,
 	case ACTION_TYPE_ZOOM_OUT:
 		magnifier_set_scale(MAGNIFY_DECREASE);
 		break;
+	case ACTION_TYPE_BUFFER_KEYS: {
+		int timeout = action_get_int(action, "timeout", 800);
+		type_ahead_begin(&server.seat, timeout < 50 ? 50 : timeout > 3000 ? 3000 : timeout);
+		break;
+	}
 	case ACTION_TYPE_TOGGLE_SHOW_DESKTOP:
 		show_desktop_toggle();
 		break;

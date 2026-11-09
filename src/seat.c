@@ -27,6 +27,7 @@
 #include "input/tablet-pad.h"
 #include "input/input.h"
 #include "input/keyboard.h"
+#include "input/type-ahead.h"
 #include "input/key-state.h"
 #include "labwc.h"
 #include "output.h"
@@ -49,6 +50,7 @@ input_device_destroy(struct wl_listener *listener, void *data)
 	/* `struct keyboard` is derived and has some extra clean up to do */
 	if (input->wlr_input_device->type == WLR_INPUT_DEVICE_KEYBOARD) {
 		struct keyboard *keyboard = (struct keyboard *)input;
+		type_ahead_keyboard_gone(input->seat, keyboard->wlr_keyboard);
 		wl_list_remove(&keyboard->key.link);
 		wl_list_remove(&keyboard->modifiers.link);
 		wl_list_remove(&keyboard->accessx_key.link);
@@ -860,6 +862,7 @@ seat_finish(void)
 		input_device_destroy(&input->destroy, NULL);
 	}
 
+	type_ahead_finish(seat);
 	if (seat->workspace_osd_timer) {
 		wl_event_source_remove(seat->workspace_osd_timer);
 		seat->workspace_osd_timer = NULL;
@@ -998,6 +1001,7 @@ seat_focus(struct seat *seat, struct wlr_surface *surface,
 		pressed_sent_keycodes, nr_pressed_sent_keycodes, &kb->modifiers);
 
 	input_method_relay_set_focus(seat->input_method_relay, surface);
+	type_ahead_focus_changed(seat, surface);
 
 	struct wlr_pointer_constraint_v1 *constraint =
 		wlr_pointer_constraints_v1_constraint_for_surface(server.constraints,
