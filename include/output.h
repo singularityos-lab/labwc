@@ -53,6 +53,8 @@ struct output {
 	char *icc_path;
 	const char *icc_error;
 
+	float software_brightness;
+
 	bool head_sent;
 	bool head_enabled;
 };

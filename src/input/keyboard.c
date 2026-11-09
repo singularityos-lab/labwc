@@ -19,6 +19,7 @@
 #include "input/key-state.h"
 #include "input/type-ahead.h"
 #include "labwc.h"
+#include "protocols/singularity-brightness.h"
 #include "menu/menu.h"
 #include "protocols/singularity-key-hold.h"
 #include "session-lock.h"
@@ -412,6 +413,21 @@ handle_key_release(uint32_t evdev_keycode)
 }
 
 static bool
+is_brightness_reset(struct keyinfo *keyinfo)
+{
+	uint32_t want = WLR_MODIFIER_CTRL | WLR_MODIFIER_ALT | WLR_MODIFIER_LOGO;
+	if ((keyinfo->modifiers & want) != want) {
+		return false;
+	}
+	for (int i = 0; i < keyinfo->raw.nr_syms; i++) {
+		if (keyinfo->raw.syms[i] == XKB_KEY_b || keyinfo->raw.syms[i] == XKB_KEY_B) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static bool
 handle_change_vt_key(struct keyboard *keyboard,
 		struct keysyms *translated)
 {
@@ -546,6 +562,12 @@ handle_compositor_keybindings(struct keyboard *keyboard,
 		} else {
 			return handle_key_release(event->keycode);
 		}
+	}
+
+	if (is_brightness_reset(&keyinfo)) {
+		key_state_store_pressed_key_as_bound(event->keycode);
+		singularity_brightness_reset();
+		return LAB_KEY_HANDLED_TRUE;
 	}
 
 	/* Catch C-A-F1 to C-A-F12 to change tty */

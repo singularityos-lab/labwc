@@ -445,6 +445,12 @@ Actions are used in menus and keyboard/mouse bindings.
 	(50 to 3000, default 800), the keys go to the surface that had the
 	focus. Usually placed before an *Execute* that opens such a surface.
 
+*<action name="ResetBrightness" />*
+	Restore full brightness on every output that was dimmed in software and
+	tell the desktop shell to forget the levels it set. The same happens
+	with Ctrl+Alt+Super+B, which works everywhere, including the lock
+	screen and the login screen.
+
 *<action name="ToggleShowDesktop" />*
 	Minimize all windows in the current workspace so that the desktop
 	becomes visible. On calling the action again the hidden windows are

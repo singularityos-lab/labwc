@@ -8,4 +8,5 @@ labwc_sources += files(
   'singularity-snap.c',
   'singularity-stage.c',
   'singularity-process.c',
+  'singularity-brightness.c',
 )

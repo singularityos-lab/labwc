@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #define _POSIX_C_SOURCE 200809L
 #include "action.h"
+#include "protocols/singularity-brightness.h"
 #include <assert.h>
 #include <signal.h>
 #include <ctype.h>
@@ -143,7 +144,8 @@ struct action_arg_list {
 	X(WARP_CURSOR, "WarpCursor") \
 	X(HIDE_CURSOR, "HideCursor") \
 	X(DEBUG_TOGGLE_KEY_STATE_INDICATOR, "DebugToggleKeyStateIndicator") \
-	X(BUFFER_KEYS, "BufferKeys")
+	X(BUFFER_KEYS, "BufferKeys") \
+	X(RESET_BRIGHTNESS, "ResetBrightness")
 
 /*
  * Will expand to:
@@ -1646,6 +1648,9 @@ run_action(struct view *view, struct action *action,
 		type_ahead_begin(&server.seat, timeout < 50 ? 50 : timeout > 3000 ? 3000 : timeout);
 		break;
 	}
+	case ACTION_TYPE_RESET_BRIGHTNESS:
+		singularity_brightness_reset();
+		break;
 	case ACTION_TYPE_TOGGLE_SHOW_DESKTOP:
 		show_desktop_toggle();
 		break;

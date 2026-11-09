@@ -19,6 +19,7 @@
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_ext_workspace_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
+#include "protocols/singularity-brightness.h"
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_management_v1.h>
 #include <wlr/types/wlr_output_power_management_v1.h>
@@ -447,6 +448,7 @@ add_output_to_layout(struct output *output)
 		 * call multiple times, but we only need to add the output
 		 * when initially creating the scene_output.
 		 */
+		singularity_brightness_output_ready(output);
 		wlr_scene_output_layout_add_output(server.scene_layout,
 			layout_output, output->scene_output);
 	}
@@ -756,6 +758,7 @@ handle_new_output(struct wl_listener *listener, void *data)
 
 	output = znew(*output);
 	output->wlr_output = wlr_output;
+	output->software_brightness = 1.0f;
 	wlr_output->data = output;
 	output->id_bit = id_bit;
 	output_state_init(output);
@@ -831,6 +834,7 @@ output_init(void)
 		wlr_gamma_control_manager_v1_create(server.wl_display);
 	wlr_scene_set_gamma_control_manager_v1(server.scene,
 		server.gamma_control_manager_v1);
+	singularity_brightness_init();
 
 	server.new_output.notify = handle_new_output;
 	wl_signal_add(&server.backend->events.new_output, &server.new_output);
