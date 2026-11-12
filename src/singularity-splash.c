@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 #define _POSIX_C_SOURCE 200809L
 #include <cairo.h>
+#include <ctype.h>
 #include <fcntl.h>
 #include <math.h>
+#include <pango/pangocairo.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 #include <wayland-server-core.h>
@@ -24,6 +27,7 @@
 #define SINGULARITY_SPLASH_MARKER "/run/singularity/compositor-first-frame"
 #define SINGULARITY_BOOT_PROGRESS "/run/boot-progress"
 #define SINGULARITY_SHELL_READY "/run/singularity/shell-ready"
+#define SINGULARITY_UPDATE_CHANNEL "/var/lib/sinty/update-channel"
 #define SINGULARITY_SPLASH_TICK_MS 33
 #define SINGULARITY_SPLASH_FINISH_MS 300
 #define SINGULARITY_SPLASH_HOLD_LIMIT_MS 30000
@@ -163,6 +167,98 @@ output_size(struct output *output, int *width, int *height, double *scale)
 	}
 }
 
+static bool
+read_channel_label(char *label, size_t len)
+{
+	char buf[64] = "";
+	FILE *f = fopen(SINGULARITY_UPDATE_CHANNEL, "r");
+	if (!f) {
+		return false;
+	}
+	if (!fgets(buf, sizeof(buf), f)) {
+		buf[0] = '\0';
+	}
+	fclose(f);
+	size_t n = strcspn(buf, "\r\n");
+	buf[n] = '\0';
+	if (n == 0 || n >= len || !strcmp(buf, "stable")) {
+		return false;
+	}
+	for (size_t i = 0; i < n; i++) {
+		unsigned char c = (unsigned char)buf[i];
+		if (!islower(c) && !isdigit(c) && c != '-') {
+			return false;
+		}
+		label[i] = (char)toupper(c);
+	}
+	label[n] = '\0';
+	return true;
+}
+
+static PangoLayout *
+channel_layout(cairo_t *cairo, double logo_size, const char *label)
+{
+	int pt = (int)floor(logo_size / 16.0);
+	if (pt < 8) {
+		pt = 8;
+	}
+	PangoLayout *layout = pango_cairo_create_layout(cairo);
+	PangoFontDescription *desc = pango_font_description_new();
+	pango_font_description_set_family(desc, "Sans");
+	pango_font_description_set_weight(desc, PANGO_WEIGHT_SEMIBOLD);
+	pango_font_description_set_size(desc, pt * PANGO_SCALE);
+	pango_layout_set_font_description(layout, desc);
+	pango_font_description_free(desc);
+	PangoAttrList *attrs = pango_attr_list_new();
+	pango_attr_list_insert(attrs, pango_attr_letter_spacing_new(pt * PANGO_SCALE / 4));
+	pango_layout_set_attributes(layout, attrs);
+	pango_attr_list_unref(attrs);
+	pango_layout_set_text(layout, label, -1);
+	return layout;
+}
+
+static void
+add_channel_label(struct wlr_scene_tree *tree, int x, int y, int width,
+		const struct brand_layout *l, double scale)
+{
+	char label[33];
+	if (!read_channel_label(label, sizeof(label))) {
+		return;
+	}
+	cairo_surface_t *probe = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
+	cairo_t *pc = cairo_create(probe);
+	PangoLayout *layout = channel_layout(pc, l->logo_size, label);
+	int tw, th;
+	pango_layout_get_pixel_size(layout, &tw, &th);
+	g_object_unref(layout);
+	cairo_destroy(pc);
+	cairo_surface_destroy(probe);
+	if (tw <= 0 || th <= 0) {
+		return;
+	}
+	struct lab_data_buffer *buf = buffer_create_cairo(tw, th, scale);
+	if (!buf) {
+		return;
+	}
+	cairo_t *cairo = cairo_create(buf->surface);
+	cairo_set_source_rgba(cairo, splash_bg[0], splash_bg[1], splash_bg[2], splash_bg[3]);
+	cairo_paint(cairo);
+	layout = channel_layout(cairo, l->logo_size, label);
+	cairo_set_source_rgba(cairo, 1, 1, 1, 0.55);
+	cairo_move_to(cairo, 0, 0);
+	pango_cairo_show_layout(cairo, layout);
+	g_object_unref(layout);
+	cairo_destroy(cairo);
+	cairo_surface_flush(buf->surface);
+	struct wlr_scene_buffer *sb = wlr_scene_buffer_create(tree, &buf->base);
+	wlr_buffer_drop(&buf->base);
+	if (sb) {
+		wlr_scene_buffer_set_dest_size(sb, tw, th);
+		wlr_scene_node_set_position(&sb->node, x + (width - tw) / 2,
+			y + (int)lround(l->bar_y + l->bar_h + floor(l->logo_size * 0.12)));
+	}
+}
+
 static void
 build_brand_frame(struct wlr_scene_tree *tree, struct output *output,
 		int x, int y)
@@ -229,6 +325,7 @@ build_brand_frame(struct wlr_scene_tree *tree, struct output *output,
 		bar_fill_width[bar_count] = bw;
 		bar_count++;
 	}
+	add_channel_label(tree, x, y, width, &l, scale);
 }
 
 static void
