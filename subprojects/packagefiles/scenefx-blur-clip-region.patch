@@ -1,0 +1,95 @@
+--- a/include/scenefx/types/wlr_scene.h
++++ b/include/scenefx/types/wlr_scene.h
+@@ -184,6 +184,10 @@ struct wlr_scene_blur {
+ 	bool should_only_blur_bottom_layer;
+ 
+ 	struct linked_node transparency_mask_source;
++
++	// Optional clip in node-local coordinates (see wlr_scene_blur_set_clip_region)
++	bool has_clip_region;
++	pixman_region32_t clip_region;
+ };
+ 
+ /** A scene-graph node telling SceneFX to render the optimized blur */
+@@ -623,6 +627,15 @@ struct wlr_scene_blur *wlr_scene_blur_create(struct wlr_scene_tree *parent,
+  */
+ void wlr_scene_blur_set_size(struct wlr_scene_blur *blur, int width, int height);
+ 
++/**
++ * Limit the blur to a region, in node-local coordinates. The blur is computed
++ * once for the node and only drawn inside the region, so an arbitrary shape
++ * (e.g. a client's rounded or multi-part blur region) needs a single node
++ * instead of one node per rectangle. Pass NULL to blur the whole node again.
++ */
++void wlr_scene_blur_set_clip_region(struct wlr_scene_blur *blur,
++		const pixman_region32_t *region);
++
+ /**
+  * Change the corner radius of all corners of an existing blur node.
+  */
+--- a/types/scene/wlr_scene.c
++++ b/types/scene/wlr_scene.c
+@@ -189,6 +189,7 @@ void wlr_scene_node_destroy(struct wlr_scene_node *node) {
+ 	} else if (node->type == WLR_SCENE_NODE_BLUR) {
+ 		struct wlr_scene_blur *blur = wlr_scene_blur_from_node(node);
+ 		linked_node_destroy(&blur->transparency_mask_source);
++		pixman_region32_fini(&blur->clip_region);
+ 	}
+ 
+ 	assert(wl_list_empty(&node->events.destroy.listener_list));
+@@ -696,6 +697,20 @@ static bool scene_node_update_iterator(struct wlr_scene_node *node,
+ 	pixman_region32_intersect_rect(&node->visible, &node->visible,
+ 		lx, ly, box.width, box.height);
+ 
++	if (node->type == WLR_SCENE_NODE_BLUR) {
++		struct wlr_scene_blur *blur = wlr_scene_blur_from_node(node);
++		if (blur->has_clip_region) {
++			// Only the clip region is visible, so rendering, damage and the
++			// blur's own damage expansion all stay inside it.
++			pixman_region32_t clip;
++			pixman_region32_init(&clip);
++			pixman_region32_copy(&clip, &blur->clip_region);
++			pixman_region32_translate(&clip, lx, ly);
++			pixman_region32_intersect(&node->visible, &node->visible, &clip);
++			pixman_region32_fini(&clip);
++		}
++	}
++
+ 	if (data->calculate_visibility) {
+ 		pixman_region32_t opaque;
+ 		pixman_region32_init(&opaque);
+@@ -1099,6 +1114,8 @@ struct wlr_scene_blur *wlr_scene_blur_create(struct wlr_scene_tree *parent,
+ 	blur->transparency_mask_source = linked_node_init();
+ 	blur->width = width;
+ 	blur->height = height;
++	blur->has_clip_region = false;
++	pixman_region32_init(&blur->clip_region);
+ 
+ 	scene_node_update(&blur->node, NULL);
+ 
+@@ -1116,6 +1133,25 @@ void wlr_scene_blur_set_size(struct wlr_scene_blur *blur, int width, int height)
+ 	scene_node_update(&blur->node, NULL);
+ }
+ 
++void wlr_scene_blur_set_clip_region(struct wlr_scene_blur *blur,
++		const pixman_region32_t *region) {
++	if (region == NULL) {
++		if (!blur->has_clip_region) {
++			return;
++		}
++		blur->has_clip_region = false;
++		pixman_region32_clear(&blur->clip_region);
++	} else {
++		if (blur->has_clip_region &&
++				pixman_region32_equal(&blur->clip_region, region)) {
++			return;
++		}
++		blur->has_clip_region = true;
++		pixman_region32_copy(&blur->clip_region, region);
++	}
++	scene_node_update(&blur->node, NULL);
++}
++
+ inline void wlr_scene_blur_set_corner_radius(struct wlr_scene_blur *blur, int corner_radius) {
+ 	wlr_scene_blur_set_corner_radii(blur, corner_radii_all(corner_radius));
+ }

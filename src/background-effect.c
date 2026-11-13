@@ -559,7 +559,14 @@ blur_nodes_update(struct background_effect_surface *surface)
 		shapes = region_components(&node_region, &n_rects);
 		rects = shapes;
 	} else {
-		rects = pixman_region32_rectangles(&node_region, &n_rects);
+		/*
+		 * A rounded region arrives as one rectangle per scanline of
+		 * its corners, and SceneFX runs the whole blur pipeline once
+		 * per node. Blur the region's extents with a single node
+		 * clipped to the region instead of one node per rectangle.
+		 */
+		n_rects = pixman_region32_empty(&node_region) ? 0 : 1;
+		rects = pixman_region32_extents(&node_region);
 	}
 	for (int i = 0; i < n_rects; i++) {
 		int x = offset_x + rects[i].x1;
@@ -579,6 +586,13 @@ blur_nodes_update(struct background_effect_surface *surface)
 		if (state->liquid > 0.0f) {
 			wlr_scene_blur_set_corner_radius(blur, state->corner_radius);
 			wlr_scene_blur_set_liquid(blur, state->liquid);
+		} else if (pixman_region32_n_rects(&node_region) > 1) {
+			pixman_region32_t clip;
+			pixman_region32_init(&clip);
+			pixman_region32_copy(&clip, &node_region);
+			pixman_region32_translate(&clip, -rects[i].x1, -rects[i].y1);
+			wlr_scene_blur_set_clip_region(blur, &clip);
+			pixman_region32_fini(&clip);
 		}
 		/*
 		 * Render below the surface content. Required for the fallback
