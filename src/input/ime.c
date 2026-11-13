@@ -3,6 +3,7 @@
 
 #include "input/ime.h"
 #include <assert.h>
+#include <string.h>
 #include <wlr/types/wlr_input_method_v2.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output_layout.h>
@@ -87,15 +88,24 @@ input_method_keyboard_grab_forward_key(struct keyboard *keyboard,
 {
 	struct wlr_input_method_keyboard_grab_v2 *keyboard_grab =
 		get_keyboard_grab(keyboard);
-	if (keyboard_grab) {
-		wlr_input_method_keyboard_grab_v2_set_keyboard(keyboard_grab,
-			keyboard->wlr_keyboard);
-		wlr_input_method_keyboard_grab_v2_send_key(keyboard_grab,
-			event->time_msec, event->keycode, event->state);
-		return true;
-	} else {
+	if (!keyboard_grab) {
 		return false;
 	}
+
+	struct input_method_relay *relay = keyboard->base.seat->input_method_relay;
+	if (event->keycode < KEY_CNT) {
+		bool pressed = event->state == WL_KEYBOARD_KEY_STATE_PRESSED;
+		if (!pressed && !relay->grabbed_keys[event->keycode]) {
+			return false;
+		}
+		relay->grabbed_keys[event->keycode] = pressed;
+	}
+
+	wlr_input_method_keyboard_grab_v2_set_keyboard(keyboard_grab,
+		keyboard->wlr_keyboard);
+	wlr_input_method_keyboard_grab_v2_send_key(keyboard_grab,
+		event->time_msec, event->keycode, event->state);
+	return true;
 }
 
 /*
@@ -343,6 +353,8 @@ handle_input_method_grab_keyboard(struct wl_listener *listener, void *data)
 	struct input_method_relay *relay = wl_container_of(listener, relay,
 		input_method_grab_keyboard);
 	struct wlr_input_method_keyboard_grab_v2 *keyboard_grab = data;
+
+	memset(relay->grabbed_keys, 0, sizeof(relay->grabbed_keys));
 
 	struct wlr_keyboard *active_keyboard =
 		wlr_seat_get_keyboard(relay->seat->wlr_seat);

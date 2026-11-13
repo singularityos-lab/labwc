@@ -3,6 +3,8 @@
 #ifndef LABWC_IME_H
 #define LABWC_IME_H
 
+#include <linux/input-event-codes.h>
+#include <stdbool.h>
 #include <wayland-server-core.h>
 
 struct keyboard;
@@ -28,6 +30,8 @@ struct input_method_relay {
 	 * Its client must be the same as that of focused_surface.
 	 */
 	struct text_input *active_text_input;
+
+	bool grabbed_keys[KEY_CNT];
 
 	struct wl_list popups; /* input_method_popup.link */
 	struct wlr_scene_tree *popup_tree;
