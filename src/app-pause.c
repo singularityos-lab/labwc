@@ -200,7 +200,6 @@ overlay_create(struct view *view)
 		buffer_create_cairo(BUTTON_SIZE, BUTTON_SIZE, scale);
 	if (button) {
 		cairo_t *cairo = cairo_create(button->surface);
-		cairo_scale(cairo, scale, scale);
 		draw_button(cairo);
 		cairo_destroy(cairo);
 		cairo_surface_flush(button->surface);
