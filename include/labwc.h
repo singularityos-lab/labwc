@@ -284,6 +284,7 @@ struct server {
 #endif
 	struct wlr_scene_tree *cycle_preview_tree;
 	/* Tree for built in menu */
+	struct wlr_scene_tree *pip_tree;
 	struct wlr_scene_tree *menu_tree;
 
 	/* Workspaces */

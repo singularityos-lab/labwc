@@ -85,6 +85,7 @@
 #include "output-virtual.h"
 #include "protocols/singularity-tiling.h"
 #include "protocols/singularity-gesture.h"
+#include "protocols/singularity-pip.h"
 #include "protocols/singularity-motion.h"
 #include "protocols/singularity-stage.h"
 #include "protocols/singularity-process.h"
@@ -495,6 +496,47 @@ skip_render_only_gpus(void)
 }
 
 static bool
+client_is_primary_shell(const struct wl_client *client)
+{
+	pid_t pid = -1;
+	wl_client_get_credentials(client, &pid, NULL, NULL);
+	if (pid <= 0 || server.primary_client_pid <= 0) {
+		return false;
+	}
+	if (pid == server.primary_client_pid) {
+		return true;
+	}
+
+	char path[64];
+	snprintf(path, sizeof(path), "/proc/%ld/status", (long)pid);
+	FILE *status = fopen(path, "r");
+	if (!status) {
+		return false;
+	}
+	long parent = -1;
+	char line[128];
+	while (fgets(line, sizeof(line), status)) {
+		if (sscanf(line, "PPid:\t%ld", &parent) == 1) {
+			break;
+		}
+	}
+	fclose(status);
+	if (parent != (long)server.primary_client_pid) {
+		return false;
+	}
+
+	snprintf(path, sizeof(path), "/proc/%ld/exe", (long)pid);
+	char executable[PATH_MAX];
+	ssize_t length = readlink(path, executable, sizeof(executable) - 1);
+	if (length < 0) {
+		return false;
+	}
+	executable[length] = '\0';
+	const char *name = strrchr(executable, '/');
+	return name && !strcmp(name + 1, "singularity-desktop");
+}
+
+static bool
 server_global_filter(const struct wl_client *client, const struct wl_global *global, void *data)
 {
 	const struct wl_interface *iface = wl_global_get_interface(global);
@@ -528,6 +570,9 @@ server_global_filter(const struct wl_client *client, const struct wl_global *glo
 	const struct wlr_security_context_v1_state *security_context =
 		wlr_security_context_manager_v1_lookup_client(
 			server.security_context_manager_v1, (struct wl_client *)client);
+	if (!strcmp(iface->name, "zsingularity_pip_manager_v1")) {
+		return !security_context && client_is_primary_shell(client);
+	}
 	if (security_context && global == server.security_context_manager_v1->global) {
 		return false;
 	} else if (security_context) {
@@ -590,6 +635,7 @@ static void
 handle_renderer_lost(struct wl_listener *listener, void *data)
 {
 	wlr_log(WLR_INFO, "Re-creating renderer after GPU reset");
+	singularity_pip_close();
 
 	struct wlr_renderer *renderer = fx_renderer_create(server.backend);
 	if (!renderer) {
@@ -888,6 +934,7 @@ server_init(void)
 	// but xwayland could not be successfully started.
 	server.unmanaged_tree = lab_wlr_scene_tree_create(&server.scene->tree);
 #endif
+	server.pip_tree = lab_wlr_scene_tree_create(&server.scene->tree);
 	server.menu_tree = lab_wlr_scene_tree_create(&server.scene->tree);
 	server.cycle_preview_tree = lab_wlr_scene_tree_create(&server.scene->tree);
 
@@ -997,6 +1044,7 @@ server_init(void)
 			server.wl_display, LAB_EXT_FOREIGN_TOPLEVEL_LIST_VERSION);
 
 	singularity_preview_init();
+	singularity_pip_init();
 	singularity_tiling_init();
 	singularity_snap_init();
 	singularity_gesture_init();
@@ -1121,6 +1169,7 @@ server_finish(void)
 	wl_event_source_remove(server.sigusr1_source);
 
 	wl_display_destroy_clients(server.wl_display);
+	singularity_pip_finish();
 
 	nag_finish();
 	seat_finish();
