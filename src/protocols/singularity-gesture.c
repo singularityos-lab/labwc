@@ -7,6 +7,7 @@
 #include <wlr/types/wlr_scene.h>
 #include "common/macros.h"
 #include "labwc.h"
+#include "motion.h"
 #include "output.h"
 #include "singularity-gesture-unstable-v1-protocol.h"
 #include "view.h"
@@ -15,8 +16,6 @@
 
 #define REVEAL_EDGE_SIZE 28
 #define REVEAL_GESTURE_DISTANCE 0.35
-#define REVEAL_ANIMATION_FRAMES 12
-#define REVEAL_ANIMATION_INTERVAL_MS 16
 
 struct singularity_gesture_manager {
 	struct wl_global *global;
@@ -37,13 +36,12 @@ struct reveal_view {
 
 static struct {
 	struct wl_list views;
-	struct wl_event_source *timer;
+	struct motion_timed timed;
 	double progress;
 	double gesture_start_progress;
 	double gesture_start_scale;
 	double settle_from;
 	double settle_to;
-	int frame;
 	bool initialized;
 } desktop_reveal;
 
@@ -62,10 +60,7 @@ reveal_view_destroy(struct wl_listener *listener, void *data)
 	wl_list_remove(&entry->link);
 	free(entry);
 	if (wl_list_empty(&desktop_reveal.views)) {
-		if (desktop_reveal.timer) {
-			wl_event_source_remove(desktop_reveal.timer);
-			desktop_reveal.timer = NULL;
-		}
+		motion_timed_cancel(&desktop_reveal.timed);
 		desktop_reveal.progress = 0.0;
 	}
 }
@@ -164,63 +159,37 @@ desktop_reveal_capture(void)
 	return !wl_list_empty(&desktop_reveal.views);
 }
 
-static double
-ease_out_cubic(double progress)
-{
-	double remaining = 1.0 - progress;
-	return 1.0 - remaining * remaining * remaining;
-}
-
 static void
 desktop_reveal_finish_settle(void)
 {
-	if (desktop_reveal.timer) {
-		wl_event_source_remove(desktop_reveal.timer);
-		desktop_reveal.timer = NULL;
-	}
 	desktop_reveal_apply(desktop_reveal.settle_to);
 	if (desktop_reveal.settle_to == 0.0) {
 		desktop_reveal_clear();
 	}
 }
 
-static int
-desktop_reveal_settle(void *data)
+static void
+desktop_reveal_settle_update(struct motion_timed *timed, double eased, double linear)
 {
-	desktop_reveal.frame++;
-	double progress = MIN(1.0,
-		(double)desktop_reveal.frame / REVEAL_ANIMATION_FRAMES);
-	double eased = ease_out_cubic(progress);
 	desktop_reveal_apply(desktop_reveal.settle_from
 		+ (desktop_reveal.settle_to - desktop_reveal.settle_from) * eased);
-	if (desktop_reveal.frame >= REVEAL_ANIMATION_FRAMES) {
-		desktop_reveal_finish_settle();
-		return 0;
-	}
-	if (wl_event_source_timer_update(desktop_reveal.timer,
-			REVEAL_ANIMATION_INTERVAL_MS) < 0) {
-		desktop_reveal_finish_settle();
-	}
-	return 0;
+}
+
+static void
+desktop_reveal_settle_done(struct motion_timed *timed)
+{
+	desktop_reveal_finish_settle();
 }
 
 static void
 desktop_reveal_animate_to(double progress)
 {
-	if (desktop_reveal.timer) {
-		wl_event_source_remove(desktop_reveal.timer);
-		desktop_reveal.timer = NULL;
-	}
+	motion_timed_cancel(&desktop_reveal.timed);
 	desktop_reveal.settle_from = desktop_reveal.progress;
 	desktop_reveal.settle_to = progress;
-	desktop_reveal.frame = 0;
-	desktop_reveal.timer = wl_event_loop_add_timer(server.wl_event_loop,
-		desktop_reveal_settle, NULL);
-	if (!desktop_reveal.timer
-			|| wl_event_source_timer_update(desktop_reveal.timer,
-				REVEAL_ANIMATION_INTERVAL_MS) < 0) {
-		desktop_reveal_finish_settle();
-	}
+	desktop_reveal.timed.update = desktop_reveal_settle_update;
+	desktop_reveal.timed.done = desktop_reveal_settle_done;
+	motion_timed_start(&desktop_reveal.timed, MOTION_WINDOW_GEOMETRY);
 }
 
 static void
@@ -366,10 +335,7 @@ singularity_gesture_pinch_begin(uint32_t fingers, double scale)
 	if (fingers != 4 || !desktop_reveal.initialized) {
 		return false;
 	}
-	if (desktop_reveal.timer) {
-		wl_event_source_remove(desktop_reveal.timer);
-		desktop_reveal.timer = NULL;
-	}
+	motion_timed_cancel(&desktop_reveal.timed);
 	if (wl_list_empty(&desktop_reveal.views) && !desktop_reveal_capture()) {
 		return false;
 	}
@@ -401,10 +367,7 @@ singularity_gesture_finish(void)
 	if (!desktop_reveal.initialized) {
 		return;
 	}
-	if (desktop_reveal.timer) {
-		wl_event_source_remove(desktop_reveal.timer);
-		desktop_reveal.timer = NULL;
-	}
+	motion_timed_cancel(&desktop_reveal.timed);
 	desktop_reveal_apply(0.0);
 	desktop_reveal_clear();
 	desktop_reveal.initialized = false;
