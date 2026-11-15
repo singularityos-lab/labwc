@@ -15,6 +15,7 @@
 #include <drm_fourcc.h>
 #include <glib.h>
 #include <strings.h>
+#include <string.h>
 #include <wlr/backend/wayland.h>
 #include <wlr/backend/headless.h>
 #include <wlr/config.h>
@@ -589,6 +590,17 @@ configure_new_output(struct output *output)
 
 	int nested_width = 0, nested_height = 0;
 	const char *nested_mode = getenv("LABWC_NESTED_MODE");
+	if (nested_mode) {
+		const char *dash = strrchr(wlr_output->name, '-');
+		int index = dash ? atoi(dash + 1) : 1;
+		for (int i = 1; i < index; i++) {
+			const char *next = strchr(nested_mode, ',');
+			if (!next) {
+				break;
+			}
+			nested_mode = next + 1;
+		}
+	}
 	if (!saved_mode && nested_mode && (wlr_output_is_wl(wlr_output) || wlr_output_is_headless(wlr_output))
 			&& sscanf(nested_mode, "%dx%d", &nested_width, &nested_height) == 2
 			&& nested_width > 0 && nested_height > 0) {
