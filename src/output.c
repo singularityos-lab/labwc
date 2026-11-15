@@ -11,10 +11,12 @@
 #include "singularity-splash.h"
 #include <assert.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <drm_fourcc.h>
 #include <glib.h>
 #include <strings.h>
 #include <wlr/backend/wayland.h>
+#include <wlr/backend/headless.h>
 #include <wlr/config.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_ext_workspace_v1.h>
@@ -583,6 +585,18 @@ configure_new_output(struct output *output)
 			wlr_output_state_set_mode(&output->pending, best);
 			saved_mode = wlr_output_test_state(wlr_output, &output->pending);
 		}
+	}
+
+	int nested_width = 0, nested_height = 0;
+	const char *nested_mode = getenv("LABWC_NESTED_MODE");
+	if (!saved_mode && nested_mode && (wlr_output_is_wl(wlr_output) || wlr_output_is_headless(wlr_output))
+			&& sscanf(nested_mode, "%dx%d", &nested_width, &nested_height) == 2
+			&& nested_width > 0 && nested_height > 0) {
+		wlr_output_state_set_custom_mode(&output->pending,
+			nested_width, nested_height, 0);
+		saved_mode = wlr_output_test_state(wlr_output, &output->pending);
+		wlr_log(WLR_INFO, "nested mode %dx%d for %s: %s", nested_width,
+			nested_height, wlr_output->name, saved_mode ? "ok" : "rejected");
 	}
 
 	if (!saved_mode && !output_test_auto(wlr_output, &output->pending,
