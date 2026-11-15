@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include <assert.h>
 #include <dlfcn.h>
+#include <linux/input.h>
+#include <math.h>
 #include <stdbool.h>
+#include <string.h>
 #include <strings.h>
 #include <wlr/config.h>
 #include <wlr/types/wlr_cursor.h>
@@ -600,6 +603,61 @@ new_keyboard(struct seat *seat, struct wlr_input_device *device, bool is_virtual
 	return (struct input *)keyboard;
 }
 
+static bool
+output_is_internal_panel(struct wlr_output *wlr_output)
+{
+	const char *name = wlr_output->name;
+	return !strncmp(name, "eDP", 3) || !strncmp(name, "LVDS", 4)
+		|| !strncmp(name, "DSI", 3);
+}
+
+static char *
+auto_touch_output_name(struct wlr_input_device *dev)
+{
+#if WLR_HAS_LIBINPUT_BACKEND
+	if (!wlr_input_device_is_libinput(dev)) {
+		return NULL;
+	}
+	struct libinput_device *handle = wlr_libinput_get_device_handle(dev);
+	double width = 0, height = 0;
+	bool sized = libinput_device_get_size(handle, &width, &height) == 0
+		&& width > 0 && height > 0;
+	unsigned int bus = libinput_device_get_id_bustype(handle);
+	bool external = bus == BUS_USB || bus == BUS_BLUETOOTH;
+
+	struct output *output, *best = NULL, *internal = NULL;
+	double best_error = 0.15;
+	wl_list_for_each(output, &server.outputs, link) {
+		if (!output_is_usable(output)) {
+			continue;
+		}
+		struct wlr_output *o = output->wlr_output;
+		if (output_is_internal_panel(o)) {
+			internal = output;
+		}
+		if (!sized || o->phys_width <= 0 || o->phys_height <= 0) {
+			continue;
+		}
+		double error = MAX(fabs(o->phys_width - width) / width,
+			fabs(o->phys_height - height) / height);
+		double swapped = MAX(fabs(o->phys_width - height) / height,
+			fabs(o->phys_height - width) / width);
+		error = MIN(error, swapped);
+		if (error < best_error) {
+			best_error = error;
+			best = output;
+		}
+	}
+	if (best) {
+		return best->wlr_output->name;
+	}
+	if (!external && internal) {
+		return internal->wlr_output->name;
+	}
+#endif
+	return NULL;
+}
+
 static void
 map_touch_to_output(struct seat *seat, struct wlr_input_device *dev)
 {
@@ -613,6 +671,9 @@ map_touch_to_output(struct seat *seat, struct wlr_input_device *dev)
 	}
 
 	char *output_name = touch->output_name ? touch->output_name : touch_config_output_name;
+	if (!output_name) {
+		output_name = auto_touch_output_name(dev);
+	}
 	wlr_log(WLR_INFO, "map touch to output %s", output_name ? output_name : "unknown");
 	map_input_to_output(seat, dev, output_name);
 }
