@@ -23,6 +23,7 @@ static struct {
 	struct wl_global *global;
 	struct wl_list resources;
 	struct wl_listener set_gamma;
+	struct wl_listener manager_destroy;
 } state;
 
 uint64_t
@@ -170,6 +171,13 @@ handle_set_gamma(struct wl_listener *listener, void *data)
 }
 
 static void
+handle_manager_destroy(struct wl_listener *listener, void *data)
+{
+	wl_list_remove(&state.set_gamma.link);
+	wl_list_remove(&state.manager_destroy.link);
+}
+
+static void
 handle_destroy(struct wl_client *client, struct wl_resource *resource)
 {
 	wl_resource_destroy(resource);
@@ -224,4 +232,6 @@ singularity_brightness_init(void)
 		&zsingularity_brightness_manager_v1_interface, 1, NULL, bind_manager);
 	state.set_gamma.notify = handle_set_gamma;
 	wl_signal_add(&server.gamma_control_manager_v1->events.set_gamma, &state.set_gamma);
+	state.manager_destroy.notify = handle_manager_destroy;
+	wl_signal_add(&server.gamma_control_manager_v1->events.destroy, &state.manager_destroy);
 }
