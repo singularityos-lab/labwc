@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 #include <wlr/types/wlr_xdg_shell.h>
@@ -14,6 +15,7 @@
 #include "labwc.h"
 #include "view.h"
 
+#define SHARED_SESSION_DIR "/run/singularity/labwc-session"
 #define TICK_MS 1000
 #define IDLE_TICK_MS 5000
 #define SUSPEND_AFTER_MS 3000
@@ -241,12 +243,18 @@ handle_timer(void *data)
 void
 background_apps_init(void)
 {
-	const char *runtime = getenv("XDG_RUNTIME_DIR");
-	if (!runtime) {
-		return;
+	struct stat st;
+	if (stat(SHARED_SESSION_DIR, &st) == 0 && S_ISDIR(st.st_mode)) {
+		state.flag = xstrdup(SHARED_SESSION_DIR "/background-apps");
+		state.list = xstrdup(SHARED_SESSION_DIR "/background-apps.list");
+	} else {
+		const char *runtime = getenv("XDG_RUNTIME_DIR");
+		if (!runtime) {
+			return;
+		}
+		state.flag = strdup_printf("%s/singularity/background-apps", runtime);
+		state.list = strdup_printf("%s/singularity/background-apps.list", runtime);
 	}
-	state.flag = strdup_printf("%s/singularity/background-apps", runtime);
-	state.list = strdup_printf("%s/singularity/background-apps.list", runtime);
 	unlink(state.list);
 	state.timer = wl_event_loop_add_timer(server.wl_event_loop,
 		handle_timer, NULL);
