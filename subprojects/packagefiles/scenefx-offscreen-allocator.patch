@@ -1,0 +1,73 @@
+diff --git a/include/render/fx_renderer/fx_renderer.h b/include/render/fx_renderer/fx_renderer.h
+index 93d0fa6..45c2f4a 100644
+--- a/include/render/fx_renderer/fx_renderer.h
++++ b/include/render/fx_renderer/fx_renderer.h
+@@ -152,6 +152,8 @@ struct fx_renderer {
+ 	struct wlr_egl *egl;
+ 	int drm_fd;
+ 
++	struct wlr_allocator *offscreen_allocator;
++
+ 	struct wlr_drm_format_set shm_texture_formats;
+ 
+ 	const char *exts_str;
+diff --git a/include/scenefx/render/fx_renderer/fx_renderer.h b/include/scenefx/render/fx_renderer/fx_renderer.h
+index 2fe1435..0774d6f 100644
+--- a/include/scenefx/render/fx_renderer/fx_renderer.h
++++ b/include/scenefx/render/fx_renderer/fx_renderer.h
+@@ -14,6 +14,10 @@ struct wlr_renderer *fx_renderer_create(struct wlr_backend *backend);
+ 
+ struct fx_renderer *fx_get_renderer(struct wlr_renderer *wlr_renderer);
+ 
++struct wlr_allocator;
++void fx_renderer_set_offscreen_allocator(struct wlr_renderer *renderer,
++	struct wlr_allocator *allocator);
++
+ bool fx_renderer_check_ext(struct wlr_renderer *renderer, const char *ext);
+ GLuint fx_renderer_get_buffer_fbo(struct wlr_renderer *renderer, struct wlr_buffer *buffer);
+ 
+diff --git a/render/fx_renderer/fx_pass.c b/render/fx_renderer/fx_pass.c
+index bb372e6..874e0b7 100644
+--- a/render/fx_renderer/fx_pass.c
++++ b/render/fx_renderer/fx_pass.c
+@@ -71,16 +71,18 @@ bool fx_render_pass_init_offscreen_buffers(struct wlr_render_pass *render_pass,
+ 	struct fx_renderer *renderer = pass->buffer->renderer;
+ 	const int width = pass->buffer->buffer->width;
+ 	const int height = pass->buffer->buffer->height;
++	struct wlr_allocator *allocator = renderer->offscreen_allocator ?
++		renderer->offscreen_allocator : output->allocator;
+ 	bool failed = false;
+-	fx_framebuffer_get_or_create_custom(renderer, output->allocator, width, height, false,
++	fx_framebuffer_get_or_create_custom(renderer, allocator, width, height, false,
+ 			&pass->fx_offscreen_buffers->blur_saved_pixels_buffer, &failed);
+-	fx_framebuffer_get_or_create_custom(renderer, output->allocator, width, height, true,
++	fx_framebuffer_get_or_create_custom(renderer, allocator, width, height, true,
+ 			&pass->fx_offscreen_buffers->effects_buffer, &failed);
+-	fx_framebuffer_get_or_create_custom(renderer, output->allocator, width, height, true,
++	fx_framebuffer_get_or_create_custom(renderer, allocator, width, height, true,
+ 			&pass->fx_offscreen_buffers->effects_buffer_swapped, &failed);
+-	fx_framebuffer_get_or_create_custom(renderer, output->allocator, width, height, false,
++	fx_framebuffer_get_or_create_custom(renderer, allocator, width, height, false,
+ 			&pass->fx_offscreen_buffers->optimized_blur_buffer, &failed);
+-	fx_framebuffer_get_or_create_custom(renderer, output->allocator, width, height, false,
++	fx_framebuffer_get_or_create_custom(renderer, allocator, width, height, false,
+ 			&pass->fx_offscreen_buffers->optimized_no_blur_buffer, &failed);
+ 
+ 	// Bind back to the default buffer
+diff --git a/render/fx_renderer/fx_renderer.c b/render/fx_renderer/fx_renderer.c
+index c3d3bf7..ae569c4 100644
+--- a/render/fx_renderer/fx_renderer.c
++++ b/render/fx_renderer/fx_renderer.c
+@@ -103,6 +103,12 @@ static inline void free_shaders(struct fx_renderer *renderer) {
+ 	pop_fx_debug(renderer);
+ }
+ 
++void fx_renderer_set_offscreen_allocator(struct wlr_renderer *wlr_renderer,
++		struct wlr_allocator *allocator) {
++	struct fx_renderer *renderer = fx_get_renderer(wlr_renderer);
++	renderer->offscreen_allocator = allocator;
++}
++
+ static void fx_renderer_destroy(struct wlr_renderer *wlr_renderer) {
+ 	struct fx_renderer *renderer = fx_get_renderer(wlr_renderer);
+ 

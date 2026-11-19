@@ -91,7 +91,7 @@ render_thumb(struct output *output, struct view *view)
 		 */
 		return NULL;
 	}
-	struct wlr_buffer *buffer = wlr_allocator_create_buffer(server.allocator,
+	struct wlr_buffer *buffer = server_create_render_buffer(
 		view->current.width, view->current.height,
 		&output->wlr_output->swapchain->format);
 	if (!buffer) {

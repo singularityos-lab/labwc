@@ -631,6 +631,33 @@ get_headless_backend(struct wlr_backend *backend, void *data)
 	}
 }
 
+static struct wlr_allocator *
+create_render_allocator(struct wlr_renderer *renderer)
+{
+	struct wlr_allocator *allocator =
+		wlr_allocator_autocreate(server.headless.backend, renderer);
+	if (!allocator) {
+		wlr_log(WLR_INFO, "no render-node allocator, offscreen buffers "
+			"share the scanout allocator");
+	}
+	fx_renderer_set_offscreen_allocator(renderer, allocator);
+	return allocator;
+}
+
+struct wlr_buffer *
+server_create_render_buffer(int width, int height,
+		const struct wlr_drm_format *format)
+{
+	if (server.render_allocator) {
+		struct wlr_buffer *buffer = wlr_allocator_create_buffer(
+			server.render_allocator, width, height, format);
+		if (buffer) {
+			return buffer;
+		}
+	}
+	return wlr_allocator_create_buffer(server.allocator, width, height, format);
+}
+
 static void
 handle_renderer_lost(struct wl_listener *listener, void *data)
 {
@@ -655,8 +682,10 @@ handle_renderer_lost(struct wl_listener *listener, void *data)
 
 	struct wlr_renderer *old_renderer = server.renderer;
 	struct wlr_allocator *old_allocator = server.allocator;
+	struct wlr_allocator *old_render_allocator = server.render_allocator;
 	server.renderer = renderer;
 	server.allocator = allocator;
+	server.render_allocator = create_render_allocator(renderer);
 
 	wl_list_remove(&server.renderer_lost.link);
 	wl_signal_add(&server.renderer->events.lost, &server.renderer_lost);
@@ -675,6 +704,9 @@ handle_renderer_lost(struct wl_listener *listener, void *data)
 
 	wlr_allocator_destroy(old_allocator);
 	wlr_renderer_destroy(old_renderer);
+	if (old_render_allocator) {
+		wlr_allocator_destroy(old_render_allocator);
+	}
 }
 
 static void
@@ -848,6 +880,7 @@ server_init(void)
 		wlr_log(WLR_ERROR, "unable to create allocator");
 		exit(EXIT_FAILURE);
 	}
+	server.render_allocator = create_render_allocator(server.renderer);
 
 	wl_list_init(&server.views);
 	wl_list_init(&server.focus_order);
@@ -1194,6 +1227,9 @@ server_finish(void)
 
 	wl_list_remove(&server.renderer_lost.link);
 	wlr_renderer_destroy(server.renderer);
+	if (server.render_allocator) {
+		wlr_allocator_destroy(server.render_allocator);
+	}
 
 	workspaces_destroy();
 	wlr_scene_node_destroy(&server.scene->tree.node);

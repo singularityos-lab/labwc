@@ -139,8 +139,8 @@ magnifier_draw(struct output *output, struct wlr_buffer *output_buffer, struct w
 		tmp_texture = NULL;
 	}
 	if (!tmp_buffer) {
-		tmp_buffer = wlr_allocator_create_buffer(
-			server.allocator, mag_box.width, mag_box.height,
+		tmp_buffer = server_create_render_buffer(
+			mag_box.width, mag_box.height,
 			&output->wlr_output->swapchain->format);
 	}
 	if (!tmp_buffer) {

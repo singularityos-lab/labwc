@@ -149,7 +149,7 @@ static bool composite_capture(struct view *view, struct wlr_buffer *buffer) {
         return false;
     }
 
-    struct wlr_buffer *gpu = wlr_allocator_create_buffer(server.allocator,
+    struct wlr_buffer *gpu = server_create_render_buffer(
         buffer->width, buffer->height, &output->wlr_output->swapchain->format);
     if (!gpu) {
         return false;

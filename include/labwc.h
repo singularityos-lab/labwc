@@ -14,6 +14,7 @@
 #define XCURSOR_SIZE 24
 
 struct wlr_xdg_popup;
+struct wlr_drm_format;
 struct view_animation;
 struct background_effect;
 
@@ -183,6 +184,7 @@ struct server {
 
 	struct wlr_renderer *renderer;
 	struct wlr_allocator *allocator;
+	struct wlr_allocator *render_allocator;
 	struct wlr_backend *backend;
 	struct headless {
 		struct wlr_backend *backend;
@@ -491,6 +493,8 @@ void handle_tearing_new_object(struct wl_listener *listener, void *data);
 void server_init(void);
 void server_start(void);
 void server_finish(void);
+struct wlr_buffer *server_create_render_buffer(int width, int height,
+	const struct wlr_drm_format *format);
 
 void create_constraint(struct wl_listener *listener, void *data);
 void constrain_cursor(struct wlr_pointer_constraint_v1

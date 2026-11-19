@@ -160,7 +160,7 @@ render_view_snapshot_scaled(struct view *view,
 	}
 	int width = lroundf(box.width * scale);
 	int height = lroundf(box.height * scale);
-	struct wlr_buffer *buffer = wlr_allocator_create_buffer(server.allocator,
+	struct wlr_buffer *buffer = server_create_render_buffer(
 		width, height, format);
 	if (!buffer) {
 		return NULL;
