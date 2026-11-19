@@ -34,6 +34,7 @@
 #include "background-effect.h"
 #include "common/macros.h"
 #include "common/mem.h"
+#include "common/panel-scale.h"
 #include "common/scene-helpers.h"
 #include "common/string-helpers.h"
 #include "config/rcxml.h"
@@ -621,6 +622,24 @@ configure_new_output(struct output *output)
 			wlr_output->name);
 		wlr_output_state_set_enabled(&output->pending, false);
 		return;
+	}
+
+	if (!(config && config->has_scale)) {
+		int width = wlr_output->width, height = wlr_output->height;
+		if (output->pending.committed & WLR_OUTPUT_STATE_MODE) {
+			bool fixed = output->pending.mode_type == WLR_OUTPUT_STATE_MODE_FIXED
+				&& output->pending.mode;
+			width = fixed ? output->pending.mode->width : output->pending.custom_mode.width;
+			height = fixed ? output->pending.mode->height : output->pending.custom_mode.height;
+		}
+		double scale = panel_default_scale(wlr_output->phys_width,
+			wlr_output->phys_height, width, height);
+		if (scale != 1.0) {
+			wlr_output_state_set_scale(&output->pending, scale);
+			wlr_log(WLR_INFO, "output %s: %dx%d px on %dx%d mm, default scale %.2f",
+				wlr_output->name, width, height, wlr_output->phys_width,
+				wlr_output->phys_height, scale);
+		}
 	}
 
 	if (config && config->has_adaptive_sync) {

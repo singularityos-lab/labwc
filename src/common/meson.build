@@ -14,6 +14,7 @@ labwc_sources += files(
   'nodename.c',
   'node-type.c',
   'parse-bool.c',
+  'panel-scale.c',
   'parse-double.c',
   'scene-helpers.c',
   'set.c',

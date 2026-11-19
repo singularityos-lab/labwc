@@ -25,6 +25,7 @@ tests = [
   'accel',
   'buf-simple',
   'gesture',
+  'panel-scale',
   'pressure-curve',
   'str',
   'xml',
@@ -41,10 +42,13 @@ foreach t : tests
       ] : t == 'pressure-curve' ? [
         '@0@.c'.format(t),
         '../src/config/tablet-tool.c',
+      ] : t == 'panel-scale' ? [
+        '@0@.c'.format(t),
+        '../src/common/panel-scale.c',
       ] : '@0@.c'.format(t),
       include_directories: [labwc_inc],
       link_with: [test_lib],
-      dependencies: t in ['gesture', 'pressure-curve'] ? test_deps + [math] : test_deps,
+      dependencies: t in ['gesture', 'panel-scale', 'pressure-curve'] ? test_deps + [math] : test_deps,
     ),
     is_parallel: false,
   )
