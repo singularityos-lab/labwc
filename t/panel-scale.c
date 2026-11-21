@@ -23,8 +23,9 @@ test_phone(void **state)
 static void
 test_desktop(void **state)
 {
-	assert_true(panel_default_scale(344, 194, 1920, 1080) == 1.25);
-	assert_true(panel_default_scale(597, 336, 3840, 2160) == 1.5);
+	assert_true(panel_default_scale(344, 194, 1920, 1080) == 1.0);
+	assert_true(panel_default_scale(301, 188, 1920, 1200) == 1.0);
+	assert_true(panel_default_scale(597, 336, 3840, 2160) == 1.0);
 	assert_true(panel_default_scale(302, 189, 2880, 1800) == 2.0);
 	assert_true(panel_default_scale(1600, 900, 3840, 2160) == 1.0);
 }

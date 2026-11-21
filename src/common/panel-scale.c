@@ -5,6 +5,7 @@
 #define HANDHELD_MAX_INCHES 7.5
 #define HANDHELD_DPI_PER_SCALE 160.0
 #define HANDHELD_MAX_SCALE 3.0
+#define DESKTOP_HIDPI 192.0
 
 double
 panel_default_scale(int width_mm, int height_mm, int width_px, int height_px)
@@ -21,17 +22,5 @@ panel_default_scale(int width_mm, int height_mm, int width_px, int height_px)
 		double steps = floor(dpi / HANDHELD_DPI_PER_SCALE * 4.0) / 4.0;
 		return fmax(1.0, fmin(HANDHELD_MAX_SCALE, steps));
 	}
-	if (dpi >= 192.0) {
-		return 2.0;
-	}
-	if (dpi >= 168.0) {
-		return 1.75;
-	}
-	if (dpi >= 144.0) {
-		return 1.5;
-	}
-	if (dpi >= 120.0) {
-		return 1.25;
-	}
-	return 1.0;
+	return dpi >= DESKTOP_HIDPI ? 2.0 : 1.0;
 }
