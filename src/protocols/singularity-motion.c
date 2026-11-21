@@ -6,6 +6,7 @@
 #include <strings.h>
 #include <wayland-server-core.h>
 #include <wlr/types/wlr_compositor.h>
+#include <wlr/types/wlr_foreign_toplevel_management_v1.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <scenefx/types/wlr_scene.h>
@@ -14,6 +15,8 @@
 #include "motion.h"
 #include "output.h"
 #include "singularity-motion-unstable-v1-protocol.h"
+#include "view.h"
+#include "view-animation.h"
 
 #define LAUNCH_EXPIRY_NS 8000000000LL
 #define MAX_LAUNCHES 8
@@ -173,11 +176,110 @@ handle_launch(struct wl_client *client, struct wl_resource *resource,
 	launch->time_ns = motion_now_ns();
 }
 
+struct card_handle {
+	struct wl_resource *resource;
+	struct view_card *card;
+};
+
+static struct card_handle *
+card_handle_from_resource(struct wl_resource *resource)
+{
+	return wl_resource_get_user_data(resource);
+}
+
+static void
+handle_card_done(void *data)
+{
+	struct card_handle *handle = data;
+	handle->card = NULL;
+	zsingularity_motion_card_v1_send_done(handle->resource);
+}
+
+static void
+handle_card_destroy(struct wl_client *client, struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
+
+static void
+handle_card_set_rect(struct wl_client *client, struct wl_resource *resource,
+		int32_t x, int32_t y, int32_t width, int32_t height, int32_t radius)
+{
+	struct card_handle *handle = card_handle_from_resource(resource);
+	if (!handle || !handle->card) {
+		return;
+	}
+	view_card_set_rect(handle->card,
+		(struct wlr_box){ x, y, width, height }, radius);
+}
+
+static void
+handle_card_release(struct wl_client *client, struct wl_resource *resource,
+		uint32_t action, int32_t x, int32_t y, int32_t width, int32_t height,
+		int32_t radius, int32_t velocity_x, int32_t velocity_y)
+{
+	struct card_handle *handle = card_handle_from_resource(resource);
+	if (!handle || !handle->card) {
+		return;
+	}
+	view_card_release(handle->card,
+		action == ZSINGULARITY_MOTION_CARD_V1_RELEASE_ACTION_MINIMIZE
+			? VIEW_CARD_MINIMIZE : VIEW_CARD_SHOW,
+		(struct wlr_box){ x, y, width, height }, radius,
+		velocity_x, velocity_y);
+}
+
+static const struct zsingularity_motion_card_v1_interface card_impl = {
+	.destroy = handle_card_destroy,
+	.set_rect = handle_card_set_rect,
+	.release = handle_card_release,
+};
+
+static void
+card_resource_destroy(struct wl_resource *resource)
+{
+	struct card_handle *handle = card_handle_from_resource(resource);
+	if (!handle) {
+		return;
+	}
+	if (handle->card) {
+		view_card_destroy(handle->card);
+	}
+	free(handle);
+}
+
+static void
+handle_get_card(struct wl_client *client, struct wl_resource *resource,
+		uint32_t id, struct wl_resource *toplevel_resource)
+{
+	struct wl_resource *card_resource = wl_resource_create(client,
+		&zsingularity_motion_card_v1_interface,
+		wl_resource_get_version(resource), id);
+	if (!card_resource) {
+		wl_client_post_no_memory(client);
+		return;
+	}
+	struct card_handle *handle = znew(*handle);
+	handle->resource = card_resource;
+	wl_resource_set_implementation(card_resource, &card_impl, handle,
+		card_resource_destroy);
+	struct wlr_foreign_toplevel_handle_v1 *toplevel =
+		wl_resource_get_user_data(toplevel_resource);
+	struct view *view = toplevel ? toplevel->data : NULL;
+	if (view) {
+		handle->card = view_card_create(view, handle_card_done, handle);
+	}
+	if (!handle->card) {
+		zsingularity_motion_card_v1_send_done(card_resource);
+	}
+}
+
 static const struct zsingularity_motion_manager_v1_interface manager_impl = {
 	.destroy = handle_destroy,
 	.set_icon_rect = handle_set_icon_rect,
 	.clear_icon_rects = handle_clear_icon_rects,
 	.launch = handle_launch,
+	.get_card = handle_get_card,
 };
 
 static void
@@ -205,7 +307,7 @@ singularity_motion_init(void)
 {
 	wl_list_init(&motion_manager.icons);
 	motion_manager.global = wl_global_create(server.wl_display,
-		&zsingularity_motion_manager_v1_interface, 1, NULL, bind_manager);
+		&zsingularity_motion_manager_v1_interface, 2, NULL, bind_manager);
 }
 
 static bool

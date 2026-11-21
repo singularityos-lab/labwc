@@ -185,6 +185,8 @@ struct view {
 	struct wlr_scene_tree *blur_tree;
 	struct wlr_scene_buffer *close_gesture_snapshot;
 	float close_gesture_progress;
+	struct view_card *card;
+	bool skip_minimize_animation;
 
 	/* These are never NULL and an empty string is set instead. */
 	char *title;

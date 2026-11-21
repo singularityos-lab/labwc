@@ -845,7 +845,9 @@ view_minimize(struct view *view, bool minimized)
 	 * 'open file' dialog), so it saves trying to unmap them twice
 	 */
 	struct view *root = view_get_root(view);
-	struct view_animation *animation = root->minimized == minimized
+	bool skip = root->skip_minimize_animation;
+	root->skip_minimize_animation = false;
+	struct view_animation *animation = root->minimized == minimized || skip
 		? NULL : view_animation_create(root);
 	_minimize(root, minimized, &need_refocus);
 	minimize_sub_views(root, minimized, &need_refocus);
@@ -2458,7 +2460,7 @@ mappable_disconnect(struct mappable *mappable)
 void
 view_update_visibility(struct view *view)
 {
-	bool visible = view->mapped && !view->minimized
+	bool visible = view->mapped && !view->minimized && !view->card
 		&& (!workspaces_per_output() || workspaces_view_on_current(view));
 	bool enabled = view->scene_tree->node.enabled;
 	bool animation_running = view_animation_is_running(view);
@@ -2587,6 +2589,7 @@ void
 view_destroy(struct view *view)
 {
 	assert(view);
+	view_card_view_gone(view);
 	view_animation_cancel(view);
 	view_close_gesture_set_progress(view, 0.0f);
 

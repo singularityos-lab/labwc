@@ -668,3 +668,250 @@ view_close_gesture_set_progress(struct view *view, float progress)
 		box.x, box.y);
 	wlr_scene_buffer_set_opacity(view->close_gesture_snapshot, progress);
 }
+
+#define CARD_SHADOW_SIGMA 24.0f
+
+struct view_card {
+	struct view *view;
+	struct wlr_scene_tree *tree;
+	struct wlr_scene_shadow *shadow;
+	struct wlr_scene_buffer *buffer;
+	struct wlr_box rect;
+	int radius;
+	bool released;
+	enum view_card_action action;
+	struct wlr_box from;
+	struct wlr_box to;
+	int radius_from;
+	int radius_to;
+	double span;
+	struct motion_spring_anim spring;
+	void (*done)(void *data);
+	void *data;
+};
+
+static void
+card_place(struct view_card *card, struct wlr_box box, int radius)
+{
+	box.width = MAX(1, box.width);
+	box.height = MAX(1, box.height);
+	radius = MAX(0, MIN(radius, MIN(box.width, box.height) / 2));
+	card->rect = box;
+	card->radius = radius;
+	wlr_scene_node_set_enabled(&card->tree->node, true);
+	wlr_scene_node_set_position(&card->tree->node, box.x, box.y);
+	wlr_scene_buffer_set_dest_size(card->buffer, box.width, box.height);
+	wlr_scene_buffer_set_corner_radius(card->buffer, radius);
+	wlr_scene_shadow_set_size(card->shadow, box.width, box.height);
+	wlr_scene_shadow_set_corner_radius(card->shadow, radius);
+}
+
+static void
+card_free(struct view_card *card)
+{
+	motion_spring_cancel(&card->spring);
+	if (card->tree) {
+		wlr_scene_node_destroy(&card->tree->node);
+	}
+	struct view *view = card->view;
+	if (view && view->card == card) {
+		view->card = NULL;
+		if (view->scene_tree) {
+			view_update_visibility(view);
+		}
+	}
+	free(card);
+}
+
+static void
+card_finish(struct view_card *card)
+{
+	struct view *view = card->view;
+	void (*done)(void *data) = card->done;
+	void *data = card->data;
+	enum view_card_action action = card->action;
+	card->done = NULL;
+	card_free(card);
+	if (view && view->mapped) {
+		if (action == VIEW_CARD_MINIMIZE) {
+			if (!view->minimized) {
+				view->skip_minimize_animation = true;
+				view_minimize(view, true);
+			}
+		} else {
+			if (view->minimized) {
+				view->skip_minimize_animation = true;
+				view_minimize(view, false);
+			}
+			desktop_focus_view(view, true);
+		}
+	}
+	if (done) {
+		done(data);
+	}
+}
+
+static void
+handle_card_spring(struct motion_spring_anim *anim, double value)
+{
+	struct view_card *card = wl_container_of(anim, card, spring);
+	value /= card->span;
+	card_place(card, (struct wlr_box){
+		.x = (int)lround(lerp(card->from.x, card->to.x, value)),
+		.y = (int)lround(lerp(card->from.y, card->to.y, value)),
+		.width = (int)lround(lerp(card->from.width, card->to.width, value)),
+		.height = (int)lround(lerp(card->from.height, card->to.height, value)),
+	}, (int)lround(lerp(card->radius_from, card->radius_to, value)));
+}
+
+static void
+handle_card_spring_done(struct motion_spring_anim *anim)
+{
+	struct view_card *card = wl_container_of(anim, card, spring);
+	card_place(card, card->to, card->radius_to);
+	card_finish(card);
+}
+
+struct view_card *
+view_card_create(struct view *view, void (*done)(void *data), void *data)
+{
+	assert(view);
+	if (!view->mapped || !view->scene_tree || !output_is_usable(view->output)) {
+		return NULL;
+	}
+	if (view->card) {
+		view_card_destroy(view->card);
+	}
+	view_animation_cancel(view);
+	struct wlr_buffer *snapshot = render_snapshot(view, NULL);
+	if (!snapshot) {
+		return NULL;
+	}
+	struct view_card *card = znew(*card);
+	card->view = view;
+	card->done = done;
+	card->data = data;
+	card->tree = lab_wlr_scene_tree_create(server.view_animation_tree);
+	static const float shadow_color[4] = {0.0f, 0.0f, 0.0f, 0.35f};
+	card->shadow = wlr_scene_shadow_create(card->tree, 1, 1, 0,
+		CARD_SHADOW_SIGMA, shadow_color);
+	card->buffer = lab_wlr_scene_buffer_create(card->tree, snapshot);
+	wlr_buffer_drop(snapshot);
+	wlr_scene_buffer_set_filter_mode(card->buffer, WLR_SCALE_FILTER_BILINEAR);
+	card->spring.update = handle_card_spring;
+	card->spring.done = handle_card_spring_done;
+	if (view->minimized) {
+		wlr_scene_node_set_enabled(&card->tree->node, false);
+		card->rect = ssd_max_extents(view);
+	} else {
+		card_place(card, ssd_max_extents(view), 0);
+	}
+	view->card = card;
+	view_update_visibility(view);
+	return card;
+}
+
+void
+view_card_set_rect(struct view_card *card, struct wlr_box box, int radius)
+{
+	if (!card || card->released) {
+		return;
+	}
+	card_place(card, box, radius);
+}
+
+static struct wlr_box
+card_icon_target(struct view_card *card)
+{
+	struct view *view = card->view;
+	struct wlr_box icon;
+	if (view_icon_box(view, &icon)) {
+		return fit_box(card->rect, icon);
+	}
+	struct wlr_box usable = output_usable_area_in_layout_coords(view->output);
+	struct wlr_box box = {
+		.width = MAX(1, (int)(card->rect.width * MINIMIZED_SCALE)),
+		.height = MAX(1, (int)(card->rect.height * MINIMIZED_SCALE)),
+	};
+	box.x = usable.x + (usable.width - box.width) / 2;
+	box.y = usable.y + usable.height - box.height / 2;
+	return box;
+}
+
+void
+view_card_release(struct view_card *card, enum view_card_action action,
+		struct wlr_box box, int radius, double velocity_x, double velocity_y)
+{
+	if (!card || card->released) {
+		return;
+	}
+	card->released = true;
+	card->action = action;
+	if (box.width < 1 || box.height < 1) {
+		if (action == VIEW_CARD_MINIMIZE) {
+			box = card_icon_target(card);
+			radius = MIN(box.width, box.height) / 4;
+		} else {
+			box = ssd_max_extents(card->view);
+			radius = 0;
+		}
+	}
+	if (!card->tree->node.enabled) {
+		card_place(card, box, radius);
+	}
+	card->from = card->rect;
+	card->to = box;
+	card->radius_from = card->radius;
+	card->radius_to = radius;
+	double dx = (box.x + box.width / 2.0) - (card->from.x + card->from.width / 2.0);
+	double dy = (box.y + box.height / 2.0) - (card->from.y + card->from.height / 2.0);
+	double travel = dx * dx + dy * dy;
+	double resize = MAX(abs(box.width - card->from.width),
+		abs(box.height - card->from.height));
+	card->span = MAX(1.0, MAX(sqrt(travel), (double)resize));
+	double velocity = travel > 1.0
+		? (velocity_x * dx + velocity_y * dy) / travel * card->span : 0.0;
+	if (!motion_enabled() || (travel < 1.0
+			&& card->from.width == box.width
+			&& card->from.height == box.height)) {
+		card_place(card, box, radius);
+		card_finish(card);
+		return;
+	}
+	card->spring.clamp = action == VIEW_CARD_MINIMIZE;
+	motion_spring_start(&card->spring, action == VIEW_CARD_MINIMIZE
+		? MOTION_SPRING_GENTLE : MOTION_SPRING_SNAPPY, 0.0, card->span,
+		velocity);
+}
+
+void
+view_card_destroy(struct view_card *card)
+{
+	if (!card) {
+		return;
+	}
+	card->done = NULL;
+	if (card->released && motion_spring_running(&card->spring)) {
+		motion_spring_finish(&card->spring);
+		return;
+	}
+	card_free(card);
+}
+
+void
+view_card_view_gone(struct view *view)
+{
+	struct view_card *card = view->card;
+	if (!card) {
+		return;
+	}
+	void (*done)(void *data) = card->done;
+	void *data = card->data;
+	card->done = NULL;
+	card->view = NULL;
+	view->card = NULL;
+	card_free(card);
+	if (done) {
+		done(data);
+	}
+}
