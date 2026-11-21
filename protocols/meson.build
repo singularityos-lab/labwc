@@ -24,6 +24,7 @@ server_protocols = [
 	'singularity-blur-unstable-v1.xml',
 	'singularity-key-hold-unstable-v1.xml',
 	'singularity-brightness-unstable-v1.xml',
+	'singularity-pacing-unstable-v1.xml',
 	'singularity-motion-unstable-v1.xml',
 	'singularity-snap-unstable-v1.xml',
 	'singularity-stage-unstable-v1.xml',

@@ -23,6 +23,7 @@
 #include <wlr/types/wlr_ext_workspace_v1.h>
 #include <wlr/types/wlr_gamma_control_v1.h>
 #include "protocols/singularity-brightness.h"
+#include "protocols/singularity-pacing.h"
 #include "protocols/singularity-pip.h"
 #include <wlr/types/wlr_output.h>
 #include <wlr/types/wlr_output_management_v1.h>
@@ -292,6 +293,10 @@ handle_output_frame(struct wl_listener *listener, void *data)
 	}
 #endif
 
+	if (singularity_pacing_hold(output)) {
+		return;
+	}
+
 	singularity_splash_maybe_show(output);
 	motion_output_frame(output);
 
@@ -336,6 +341,7 @@ handle_output_destroy(struct wl_listener *listener, void *data)
 
 	wl_list_remove(&output->link);
 	singularity_pip_output_destroy(output);
+	singularity_pacing_output_destroy(output);
 	output_color_release(output);
 	output_color_write_state();
 	wl_list_remove(&output->frame.link);
@@ -884,6 +890,7 @@ output_init(void)
 	wlr_scene_set_gamma_control_manager_v1(server.scene,
 		server.gamma_control_manager_v1);
 	singularity_brightness_init();
+	singularity_pacing_init();
 
 	server.new_output.notify = handle_new_output;
 	wl_signal_add(&server.backend->events.new_output, &server.new_output);

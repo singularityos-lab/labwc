@@ -10,4 +10,5 @@ labwc_sources += files(
   'singularity-stage.c',
   'singularity-process.c',
   'singularity-brightness.c',
+  'singularity-pacing.c',
 )

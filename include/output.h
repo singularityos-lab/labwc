@@ -55,6 +55,11 @@ struct output {
 
 	float software_brightness;
 
+	uint32_t pacing_rate;
+	struct wl_resource *pacing_owner;
+	int64_t pacing_last;
+	struct wl_event_source *pacing_timer;
+
 	bool head_sent;
 	bool head_enabled;
 };
