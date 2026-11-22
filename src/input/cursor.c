@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #define _POSIX_C_SOURCE 200809L
+#include "input/cursor-gesture.h"
 #include "input/cursor.h"
 #include "input/input.h"
 #include "app-pause.h"
 #include <assert.h>
+#include <linux/input-event-codes.h>
 #include <time.h>
 #include <wlr/config.h>
 #include <wlr/types/wlr_cursor.h>
@@ -206,6 +208,7 @@ handle_request_set_cursor(struct wl_listener *listener, void *data)
 		 * continue to do so as the cursor moves between outputs.
 		 */
 
+		cursor_gesture_clear(seat);
 		wlr_cursor_set_surface(seat->cursor, event->surface,
 			event->hotspot_x, event->hotspot_y);
 	}
@@ -253,7 +256,7 @@ handle_request_set_shape(struct wl_listener *listener, void *data)
 	}
 
 	wlr_log(WLR_DEBUG, "set xcursor to shape %s", shape_name);
-	wlr_cursor_set_xcursor(seat->cursor, seat->xcursor_manager, shape_name);
+	cursor_gesture_show(seat, shape_name);
 }
 
 static void
@@ -424,8 +427,7 @@ cursor_set(struct seat *seat, enum lab_cursors cursor)
 	}
 
 	if (seat->cursor_visible) {
-		wlr_cursor_set_xcursor(seat->cursor, seat->xcursor_manager,
-			cursor_names[cursor]);
+		cursor_gesture_show(seat, cursor_names[cursor]);
 	}
 	seat->server_cursor = cursor;
 }
@@ -446,6 +448,7 @@ cursor_update_image(struct seat *seat)
 {
 	enum lab_cursors cursor = seat->server_cursor;
 
+	cursor_gesture_clear(seat);
 	if (!seat->cursor_visible) {
 		wlr_cursor_unset_image(seat->cursor);
 		return;
@@ -475,6 +478,7 @@ cursor_update_image(struct seat *seat)
 	wlr_cursor_unset_image(seat->cursor);
 	wlr_cursor_set_xcursor(seat->cursor, seat->xcursor_manager,
 		cursor_names[cursor]);
+	seat->cursor_gesture.shape = cursor_names[cursor];
 }
 
 static void
@@ -1404,6 +1408,11 @@ handle_button(struct wl_listener *listener, void *data)
 		return;
 	}
 
+	if (event->button == BTN_LEFT) {
+		cursor_gesture_press(seat,
+			event->state == WL_POINTER_BUTTON_STATE_PRESSED);
+	}
+
 	bool notify;
 	switch (event->state) {
 	case WL_POINTER_BUTTON_STATE_PRESSED:
@@ -1768,6 +1777,7 @@ void cursor_finish(struct seat *seat)
 	wl_list_remove(&seat->on_cursor.axis.link);
 	wl_list_remove(&seat->on_cursor.frame.link);
 
+	cursor_gesture_finish(seat);
 	gestures_finish(seat);
 	touch_finish(seat);
 

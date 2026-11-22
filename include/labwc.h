@@ -39,6 +39,11 @@ struct seat {
 	 */
 	enum lab_cursors server_cursor;
 	bool cursor_visible;
+	struct cursor_gesture {
+		const char *shape;
+		struct wl_event_source *timer;
+		bool pressing;
+	} cursor_gesture;
 	struct wlr_cursor *cursor;
 	struct wlr_xcursor_manager *xcursor_manager;
 	struct accumulated_scroll {

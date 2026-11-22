@@ -1,6 +1,7 @@
 labwc_sources += files(
   'accessx.c',
   'cursor.c',
+  'cursor-gesture.c',
   'tablet.c',
   'tablet-pad.c',
   'tablet-state.c',

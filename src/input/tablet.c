@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-only
+#include "input/cursor-gesture.h"
 #include "input/tablet.h"
 #include <stdlib.h>
 #include <linux/input-event-codes.h>
@@ -60,6 +61,7 @@ handle_set_cursor(struct wl_listener *listener, void *data)
 		return;
 	}
 
+	cursor_gesture_clear(seat);
 	wlr_cursor_set_surface(seat->cursor, ev->surface,
 		ev->hotspot_x, ev->hotspot_y);
 }
