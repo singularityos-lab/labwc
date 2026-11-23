@@ -1,0 +1,162 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="singularity_input_share_unstable_v1">
+  <copyright>
+    Copyright © 2026 Singularity Desktop
+  </copyright>
+
+  <interface name="zsingularity_input_share_manager_v1" version="1">
+    <description summary="hand the pointer and keyboard to another device">
+      Lets a trusted client place other devices next to the edges of the
+      outputs. When the pointer is pushed through such an edge the
+      compositor hides it, stops delivering pointer and keyboard input to
+      its own surfaces and sends that input to the client instead, until the
+      client gives it back or the person presses the escape keys
+      (Ctrl+Super+Escape).
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager"/>
+    </request>
+
+    <enum name="side">
+      <entry name="left" value="0"/>
+      <entry name="right" value="1"/>
+      <entry name="top" value="2"/>
+      <entry name="bottom" value="3"/>
+    </enum>
+
+    <request name="get_edge">
+      <description summary="watch a stretch of an output edge">
+        Watches the given side of the named output, between start and end in
+        layout pixels along that side, measured from the top for left and
+        right and from the left for top and bottom. Only the part of the side
+        that does not touch another output can be crossed.
+      </description>
+      <arg name="id" type="new_id" interface="zsingularity_input_share_edge_v1"/>
+      <arg name="output" type="string"/>
+      <arg name="side" type="uint" enum="side"/>
+      <arg name="start" type="int"/>
+      <arg name="end" type="int"/>
+    </request>
+
+    <request name="get_probe">
+      <description summary="hear pushes against free edges">
+        Tells the client when the person pushes the pointer firmly against
+        a side of an output that touches neither another output nor an
+        edge, so that a device can be placed there. Nothing is captured.
+      </description>
+      <arg name="id" type="new_id" interface="zsingularity_input_share_probe_v1"/>
+    </request>
+  </interface>
+
+  <interface name="zsingularity_input_share_probe_v1" version="1">
+    <description summary="pushes against free output edges"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop listening"/>
+    </request>
+
+    <event name="pushed">
+      <description summary="the pointer was pushed through a free edge">
+        Position is where along the side the pointer pushed, measured like
+        the start and end of an edge; length is the length of that side.
+        The next push on any edge is reported only after the pointer has
+        left that edge.
+      </description>
+      <arg name="output" type="string"/>
+      <arg name="side" type="uint" enum="zsingularity_input_share_manager_v1.side"/>
+      <arg name="position" type="fixed"/>
+      <arg name="length" type="fixed"/>
+    </event>
+  </interface>
+
+  <interface name="zsingularity_input_share_edge_v1" version="1">
+    <description summary="a crossable stretch of an output edge"/>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop watching this edge">
+        Ends the capture first when this edge holds it.
+      </description>
+    </request>
+
+    <request name="release">
+      <description summary="give the input back">
+        Ends the capture and puts the pointer just inside this edge, at the
+        given position along it, measured like start and end.
+      </description>
+      <arg name="position" type="fixed"/>
+    </request>
+
+    <request name="set_resistance">
+      <description summary="hold the pointer at this edge for a while">
+        The next crossing happens only after the pointer has been pushed
+        against the edge for this distance, in layout pixels, while the
+        compositor reports the progress with pressing events. The edge
+        becomes free again once crossed. Zero removes the resistance.
+      </description>
+      <arg name="distance" type="uint"/>
+    </request>
+
+    <event name="pressing">
+      <description summary="the pointer is pushing against a resisting edge">
+        Progress goes from 0 to 1; it drops back to 0 when the person stops
+        pushing. Position and fraction are measured like in entered.
+      </description>
+      <arg name="position" type="fixed"/>
+      <arg name="fraction" type="fixed"/>
+      <arg name="progress" type="fixed"/>
+    </event>
+
+    <event name="entered">
+      <description summary="the pointer crossed this edge">
+        The capture started. Position is where the pointer crossed, measured
+        like start and end; fraction is the same place from 0 to 1 within
+        the stretch. Every input event until left goes to this edge.
+      </description>
+      <arg name="position" type="fixed"/>
+      <arg name="fraction" type="fixed"/>
+    </event>
+
+    <event name="motion">
+      <description summary="pointer motion, accelerated, in layout pixels"/>
+      <arg name="dx" type="fixed"/>
+      <arg name="dy" type="fixed"/>
+    </event>
+
+    <event name="button">
+      <description summary="a pointer button, Linux evdev code"/>
+      <arg name="button" type="uint"/>
+      <arg name="pressed" type="uint"/>
+    </event>
+
+    <event name="axis">
+      <description summary="scrolling, vertical or horizontal">
+        Value is in the units of wl_pointer.axis; discrete is the number of
+        wheel clicks, zero for smooth scrolling.
+      </description>
+      <arg name="axis" type="uint"/>
+      <arg name="value" type="fixed"/>
+      <arg name="discrete" type="int"/>
+    </event>
+
+    <event name="key">
+      <description summary="a key, Linux evdev code"/>
+      <arg name="key" type="uint"/>
+      <arg name="pressed" type="uint"/>
+    </event>
+
+    <enum name="reason">
+      <entry name="released" value="0" summary="the client gave the input back"/>
+      <entry name="escaped" value="1" summary="the person pressed the escape keys"/>
+      <entry name="cancelled" value="2" summary="the compositor took it back, for example to lock the session"/>
+    </enum>
+
+    <event name="left">
+      <description summary="the capture ended">
+        Keys and buttons still held on the other device should be released
+        there.
+      </description>
+      <arg name="reason" type="uint" enum="reason"/>
+    </event>
+  </interface>
+</protocol>

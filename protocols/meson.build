@@ -23,6 +23,7 @@ server_protocols = [
 	'singularity-pip-unstable-v1.xml',
 	'singularity-blur-unstable-v1.xml',
 	'singularity-key-hold-unstable-v1.xml',
+	'singularity-input-share-unstable-v1.xml',
 	'singularity-brightness-unstable-v1.xml',
 	'singularity-pacing-unstable-v1.xml',
 	'singularity-motion-unstable-v1.xml',

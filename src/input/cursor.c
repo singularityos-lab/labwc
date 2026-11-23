@@ -39,6 +39,7 @@
 #include "output.h"
 #include "resistance.h"
 #include "resize-outlines.h"
+#include "protocols/singularity-input-share.h"
 #include "protocols/singularity-key-hold.h"
 #include "protocols/singularity-pip.h"
 #include "protocols/singularity-tiling.h"
@@ -956,6 +957,9 @@ preprocess_cursor_motion(struct seat *seat, struct wlr_pointer *pointer,
 	 * without any input.
 	 */
 	wlr_cursor_move(seat->cursor, &pointer->base, dx, dy);
+	if (singularity_input_share_cross(seat, dx, dy, time_msec)) {
+		return;
+	}
 	workspaces_track_cursor();
 	double sx, sy;
 	bool notify = cursor_process_motion(time_msec, &sx, &sy);
@@ -991,6 +995,10 @@ handle_motion(struct wl_listener *listener, void *data)
 		return;
 	}
 	idle_manager_notify_activity(seat->wlr_seat);
+	if (singularity_input_share_active()) {
+		singularity_input_share_motion(event->delta_x, event->delta_y);
+		return;
+	}
 	cursor_set_visible(seat, /* visible */ true);
 
 	if (seat->cursor_scroll_wheel_emulation) {
@@ -1048,6 +1056,9 @@ handle_motion_absolute(struct wl_listener *listener, void *data)
 		return;
 	}
 	idle_manager_notify_activity(seat->wlr_seat);
+	if (singularity_input_share_active()) {
+		return;
+	}
 	cursor_set_visible(seat, /* visible */ true);
 
 	double lx, ly;
@@ -1402,6 +1413,11 @@ handle_button(struct wl_listener *listener, void *data)
 		return;
 	}
 	idle_manager_notify_activity(seat->wlr_seat);
+	if (singularity_input_share_active()) {
+		singularity_input_share_button(event->button,
+			event->state == WL_POINTER_BUTTON_STATE_PRESSED);
+		return;
+	}
 	cursor_set_visible(seat, /* visible */ true);
 
 	if (a11y_pointer_button(event->button, event->state, event->time_msec)) {
@@ -1561,6 +1577,11 @@ handle_axis(struct wl_listener *listener, void *data)
 		return;
 	}
 	idle_manager_notify_activity(seat->wlr_seat);
+	if (singularity_input_share_active()) {
+		singularity_input_share_axis(event->orientation, event->delta,
+			event->delta_discrete / 120);
+		return;
+	}
 	cursor_set_visible(seat, /* visible */ true);
 
 	/* input->scroll_factor is set for pointer/touch devices */

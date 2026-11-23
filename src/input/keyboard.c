@@ -21,6 +21,7 @@
 #include "labwc.h"
 #include "protocols/singularity-brightness.h"
 #include "menu/menu.h"
+#include "protocols/singularity-input-share.h"
 #include "protocols/singularity-key-hold.h"
 #include "session-lock.h"
 #include "view.h"
@@ -692,6 +693,11 @@ process_key(struct keyboard *keyboard, struct wlr_keyboard_key_event *event)
 	key_state_indicator_update(seat);
 
 	idle_manager_notify_activity(seat->wlr_seat);
+
+	if (singularity_input_share_key(keyboard, event)) {
+		keyboard_cancel_keybind_repeat(keyboard);
+		return;
+	}
 
 	/* any new press/release cancels current keybind repeat */
 	keyboard_cancel_keybind_repeat(keyboard);

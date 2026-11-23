@@ -5,6 +5,7 @@ labwc_sources += files(
   'singularity-gesture.c',
   'singularity-pip.c',
   'singularity-key-hold.c',
+  'singularity-input-share.c',
   'singularity-motion.c',
   'singularity-snap.c',
   'singularity-stage.c',

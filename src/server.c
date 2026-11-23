@@ -97,6 +97,7 @@
 #include "theme.h"
 #include "view.h"
 #include "input/tablet-state.h"
+#include "protocols/singularity-input-share.h"
 #include "protocols/singularity-key-hold.h"
 #include "workspaces.h"
 #include "xwayland.h"
@@ -1083,6 +1084,7 @@ server_init(void)
 	singularity_gesture_init();
 	singularity_blur_init();
 	singularity_key_hold_init();
+	singularity_input_share_init();
 	singularity_motion_init();
 	singularity_stage_init();
 	singularity_process_init();

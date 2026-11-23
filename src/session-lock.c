@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #define _POSIX_C_SOURCE 200809L
 #include "session-lock.h"
+#include "protocols/singularity-input-share.h"
 #include <assert.h>
 #include <wlr/types/wlr_output_layout.h>
 #include <scenefx/types/wlr_scene.h>
@@ -340,6 +341,7 @@ handle_new_session_lock(struct wl_listener *listener, void *data)
 	manager->lock_destroy.notify = handle_lock_destroy;
 	wl_signal_add(&lock->events.destroy, &manager->lock_destroy);
 
+	singularity_input_share_cancel();
 	manager->locked = true;
 	manager->lock = lock;
 	wlr_session_lock_v1_send_locked(lock);
