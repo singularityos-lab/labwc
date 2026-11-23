@@ -17,6 +17,7 @@
 #include "singularity-motion-unstable-v1-protocol.h"
 #include "view.h"
 #include "view-animation.h"
+#include "singularity-veil.h"
 
 #define LAUNCH_EXPIRY_NS 8000000000LL
 #define MAX_LAUNCHES 8
@@ -39,6 +40,7 @@ static struct {
 	struct wl_global *global;
 	struct wl_list icons;
 	struct launch_entry launches[MAX_LAUNCHES];
+	struct wl_resource *veil_owner;
 } motion_manager;
 
 static void
@@ -274,18 +276,32 @@ handle_get_card(struct wl_client *client, struct wl_resource *resource,
 	}
 }
 
+static void
+handle_fade_windows(struct wl_client *client, struct wl_resource *resource,
+		uint32_t faded, uint32_t duration)
+{
+	(void)client;
+	motion_manager.veil_owner = faded ? resource : NULL;
+	singularity_veil_fade(faded != 0, (int)(duration > 5000 ? 5000 : duration));
+}
+
 static const struct zsingularity_motion_manager_v1_interface manager_impl = {
 	.destroy = handle_destroy,
 	.set_icon_rect = handle_set_icon_rect,
 	.clear_icon_rects = handle_clear_icon_rects,
 	.launch = handle_launch,
 	.get_card = handle_get_card,
+	.fade_windows = handle_fade_windows,
 };
 
 static void
 resource_destroy(struct wl_resource *resource)
 {
 	remove_icons(resource, NULL, NULL);
+	if (motion_manager.veil_owner == resource) {
+		motion_manager.veil_owner = NULL;
+		singularity_veil_finish();
+	}
 }
 
 static void
@@ -307,7 +323,7 @@ singularity_motion_init(void)
 {
 	wl_list_init(&motion_manager.icons);
 	motion_manager.global = wl_global_create(server.wl_display,
-		&zsingularity_motion_manager_v1_interface, 2, NULL, bind_manager);
+		&zsingularity_motion_manager_v1_interface, 3, NULL, bind_manager);
 }
 
 static bool
