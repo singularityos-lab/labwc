@@ -4,7 +4,7 @@
     Copyright © 2026 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_input_share_manager_v1" version="1">
+  <interface name="zsingularity_input_share_manager_v1" version="2">
     <description summary="hand the pointer and keyboard to another device">
       Lets a trusted client place other devices next to the edges of the
       outputs. When the pointer is pushed through such an edge the
@@ -49,7 +49,7 @@
     </request>
   </interface>
 
-  <interface name="zsingularity_input_share_probe_v1" version="1">
+  <interface name="zsingularity_input_share_probe_v1" version="2">
     <description summary="pushes against free output edges"/>
 
     <request name="destroy" type="destructor">
@@ -70,7 +70,7 @@
     </event>
   </interface>
 
-  <interface name="zsingularity_input_share_edge_v1" version="1">
+  <interface name="zsingularity_input_share_edge_v1" version="2">
     <description summary="a crossable stretch of an output edge"/>
 
     <request name="destroy" type="destructor">
@@ -157,6 +157,32 @@
         there.
       </description>
       <arg name="reason" type="uint" enum="reason"/>
+    </event>
+    <event name="window_entered" since="2">
+      <description summary="a window is being dragged through this edge">
+        The person is moving a window and pushed the pointer firmly through
+        this edge, as if to throw the window to the device placed there.
+        The move goes on; nothing is captured. App id and pid name the
+        window's app; pid is zero when it is not known. Position and
+        fraction are measured like in entered.
+      </description>
+      <arg name="app_id" type="string"/>
+      <arg name="pid" type="int"/>
+      <arg name="position" type="fixed"/>
+      <arg name="fraction" type="fixed"/>
+    </event>
+    <event name="window_left" since="2">
+      <description summary="the dragged window came back or the move ended">
+        The pointer left this edge while the move went on, or the move was
+        cancelled.
+      </description>
+    </event>
+    <event name="window_dropped" since="2">
+      <description summary="the dragged window was let go through this edge">
+        The person ended the move while the window was through this edge.
+        The compositor puts the window back where the move started; moving
+        the app to the device is up to the client.
+      </description>
     </event>
   </interface>
 </protocol>

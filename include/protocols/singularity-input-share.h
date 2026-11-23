@@ -8,6 +8,7 @@
 struct seat;
 struct keyboard;
 struct wlr_keyboard_key_event;
+struct view;
 
 void singularity_input_share_init(void);
 bool singularity_input_share_active(void);
@@ -19,5 +20,7 @@ void singularity_input_share_axis(uint32_t axis, double value, int32_t discrete)
 bool singularity_input_share_key(struct keyboard *keyboard,
 	struct wlr_keyboard_key_event *event);
 void singularity_input_share_cancel(void);
+bool singularity_input_share_drop(struct view *view);
+void singularity_input_share_drag_cancel(struct view *view);
 
 #endif /* LABWC_SINGULARITY_INPUT_SHARE_H */

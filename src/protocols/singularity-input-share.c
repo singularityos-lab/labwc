@@ -18,6 +18,7 @@
 #include "labwc.h"
 #include "output.h"
 #include "session-lock.h"
+#include "view.h"
 #include "singularity-input-share-unstable-v1-protocol.h"
 
 struct share_edge {
@@ -47,6 +48,13 @@ static struct {
 		bool spent;
 	} push;
 	struct share_edge *active;
+	struct {
+		struct share_edge *edge;
+		struct view *view;
+		double pushed;
+		uint32_t msec;
+		bool through;
+	} drag;
 	struct seat *seat;
 	struct wlr_output *locked_output;
 	struct wlr_surface *keyboard_surface;
@@ -227,53 +235,66 @@ resist(struct share_edge *edge, double push, double position, uint32_t msec)
 }
 
 static bool
+on_edge(struct share_edge *edge, double cx, double cy, double dx, double dy,
+		bool pushing, double *position)
+{
+	struct wlr_box box;
+	if (!edge_box(edge, &box)) {
+		return false;
+	}
+	bool at = false;
+	double nx = cx, ny = cy;
+	switch (edge->side) {
+	case ZSINGULARITY_INPUT_SHARE_MANAGER_V1_SIDE_LEFT:
+		at = (!pushing || dx < 0) && cx <= box.x + 0.5;
+		nx = box.x - 1;
+		break;
+	case ZSINGULARITY_INPUT_SHARE_MANAGER_V1_SIDE_RIGHT:
+		at = (!pushing || dx > 0) && cx >= box.x + box.width - 1;
+		nx = box.x + box.width + 1;
+		break;
+	case ZSINGULARITY_INPUT_SHARE_MANAGER_V1_SIDE_TOP:
+		at = (!pushing || dy < 0) && cy <= box.y + 0.5;
+		ny = box.y - 1;
+		break;
+	case ZSINGULARITY_INPUT_SHARE_MANAGER_V1_SIDE_BOTTOM:
+		at = (!pushing || dy > 0) && cy >= box.y + box.height - 1;
+		ny = box.y + box.height + 1;
+		break;
+	}
+	if (!at) {
+		return false;
+	}
+	double along;
+	if (vertical(edge->side)) {
+		if (cy < box.y || cy >= box.y + box.height) {
+			return false;
+		}
+		along = cy - box.y;
+	} else {
+		if (cx < box.x || cx >= box.x + box.width) {
+			return false;
+		}
+		along = cx - box.x;
+	}
+	if (along < edge->start || along >= edge->end) {
+		return false;
+	}
+	if (wlr_output_layout_output_at(server.output_layout, nx, ny)) {
+		return false;
+	}
+	*position = along;
+	return true;
+}
+
+static bool
 cross_edge(struct seat *seat, double dx, double dy, uint32_t msec)
 {
 	double cx = seat->cursor->x, cy = seat->cursor->y;
 	struct share_edge *edge;
 	wl_list_for_each(edge, &share.edges, link) {
-		struct wlr_box box;
-		if (!edge_box(edge, &box)) {
-			continue;
-		}
-		bool at = false;
-		double position = 0, nx = cx, ny = cy;
-		switch (edge->side) {
-		case ZSINGULARITY_INPUT_SHARE_MANAGER_V1_SIDE_LEFT:
-			at = dx < 0 && cx <= box.x + 0.5;
-			nx = box.x - 1;
-			break;
-		case ZSINGULARITY_INPUT_SHARE_MANAGER_V1_SIDE_RIGHT:
-			at = dx > 0 && cx >= box.x + box.width - 1;
-			nx = box.x + box.width + 1;
-			break;
-		case ZSINGULARITY_INPUT_SHARE_MANAGER_V1_SIDE_TOP:
-			at = dy < 0 && cy <= box.y + 0.5;
-			ny = box.y - 1;
-			break;
-		case ZSINGULARITY_INPUT_SHARE_MANAGER_V1_SIDE_BOTTOM:
-			at = dy > 0 && cy >= box.y + box.height - 1;
-			ny = box.y + box.height + 1;
-			break;
-		}
-		if (!at) {
-			continue;
-		}
-		if (vertical(edge->side)) {
-			if (cy < box.y || cy >= box.y + box.height) {
-				continue;
-			}
-			position = cy - box.y;
-		} else {
-			if (cx < box.x || cx >= box.x + box.width) {
-				continue;
-			}
-			position = cx - box.x;
-		}
-		if (position < edge->start || position >= edge->end) {
-			continue;
-		}
-		if (wlr_output_layout_output_at(server.output_layout, nx, ny)) {
+		double position;
+		if (!on_edge(edge, cx, cy, dx, dy, true, &position)) {
 			continue;
 		}
 		ease_off(edge);
@@ -385,12 +406,106 @@ probe(struct seat *seat, double dx, double dy, uint32_t msec)
 	}
 }
 
+static void
+drag_reset(void)
+{
+	struct share_edge *edge = share.drag.edge;
+	bool through = share.drag.through;
+	share.drag.edge = NULL;
+	share.drag.view = NULL;
+	share.drag.pushed = 0;
+	share.drag.through = false;
+	if (edge && through) {
+		zsingularity_input_share_edge_v1_send_window_left(edge->resource);
+	}
+}
+
+static void
+drag_through(struct share_edge *edge, struct view *view, double position)
+{
+	pid_t pid = 0;
+	if (view->surface && view->surface->resource) {
+		wl_client_get_credentials(
+			wl_resource_get_client(view->surface->resource),
+			&pid, NULL, NULL);
+	}
+	double length = edge->end - edge->start;
+	share.drag.through = true;
+	zsingularity_input_share_edge_v1_send_window_entered(edge->resource,
+		view->app_id ? view->app_id : "", pid,
+		wl_fixed_from_double(position),
+		wl_fixed_from_double(length > 0 ? position / length : 0));
+}
+
+static void
+drag(struct seat *seat, struct view *view, double dx, double dy, uint32_t msec)
+{
+	double cx = seat->cursor->x, cy = seat->cursor->y, position;
+	if (share.drag.edge && (share.drag.view != view
+			|| !on_edge(share.drag.edge, cx, cy, dx, dy, false, &position))) {
+		drag_reset();
+	}
+	struct share_edge *edge;
+	wl_list_for_each(edge, &share.edges, link) {
+		if (wl_resource_get_version(edge->resource)
+				< ZSINGULARITY_INPUT_SHARE_EDGE_V1_WINDOW_ENTERED_SINCE_VERSION
+				|| !on_edge(edge, cx, cy, dx, dy, true, &position)) {
+			continue;
+		}
+		if (share.drag.edge != edge) {
+			drag_reset();
+			share.drag.edge = edge;
+			share.drag.view = view;
+		}
+		if (share.drag.through) {
+			return;
+		}
+		if (msec - share.drag.msec > PUSH_PAUSE_MSEC) {
+			share.drag.pushed = 0;
+		}
+		share.drag.msec = msec;
+		share.drag.pushed += vertical(edge->side) ? fabs(dx) : fabs(dy);
+		if (share.drag.pushed >= PUSH_DISTANCE) {
+			drag_through(edge, view, position - edge->start);
+		}
+		return;
+	}
+}
+
+bool
+singularity_input_share_drop(struct view *view)
+{
+	if (!share.drag.edge || share.drag.view != view || !share.drag.through) {
+		drag_reset();
+		return false;
+	}
+	struct share_edge *edge = share.drag.edge;
+	share.drag.through = false;
+	drag_reset();
+	zsingularity_input_share_edge_v1_send_window_dropped(edge->resource);
+	return true;
+}
+
+void
+singularity_input_share_drag_cancel(struct view *view)
+{
+	if (share.drag.view == view) {
+		drag_reset();
+	}
+}
+
 bool
 singularity_input_share_cross(struct seat *seat, double dx, double dy,
 		uint32_t msec)
 {
-	if (share.active || server.session_lock_manager->locked
-			|| server.input_mode != LAB_INPUT_STATE_PASSTHROUGH) {
+	if (share.active || server.session_lock_manager->locked) {
+		return false;
+	}
+	if (server.input_mode == LAB_INPUT_STATE_MOVE && server.grabbed_view) {
+		drag(seat, server.grabbed_view, dx, dy, msec);
+		return false;
+	}
+	if (server.input_mode != LAB_INPUT_STATE_PASSTHROUGH) {
 		return false;
 	}
 	if (cross_edge(seat, dx, dy, msec)) {
@@ -499,6 +614,10 @@ edge_resource_destroy(struct wl_resource *resource)
 	if (share.active == edge) {
 		finish(ZSINGULARITY_INPUT_SHARE_EDGE_V1_REASON_CANCELLED, false, 0);
 	}
+	if (share.drag.edge == edge) {
+		share.drag.through = false;
+		drag_reset();
+	}
 	wl_list_remove(&edge->link);
 	free(edge->output);
 	free(edge);
@@ -600,6 +719,6 @@ singularity_input_share_init(void)
 	wl_list_init(&share.edges);
 	wl_list_init(&share.probes);
 	share.global = wl_global_create(server.wl_display,
-		&zsingularity_input_share_manager_v1_interface, 1, NULL,
+		&zsingularity_input_share_manager_v1_interface, 2, NULL,
 		bind_manager);
 }
