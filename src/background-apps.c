@@ -70,9 +70,11 @@ set_suspended(struct view *view, bool suspended)
 	}
 	struct wlr_xdg_toplevel *toplevel =
 		wlr_xdg_toplevel_try_from_wlr_surface(view->surface);
-	if (toplevel) {
-		wlr_xdg_toplevel_set_suspended(toplevel, suspended);
+	if (!toplevel || !toplevel->base->initialized) {
+		view->background.suspended = false;
+		return;
 	}
+	wlr_xdg_toplevel_set_suspended(toplevel, suspended);
 }
 
 static char *
