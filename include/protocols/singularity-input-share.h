@@ -22,5 +22,6 @@ bool singularity_input_share_key(struct keyboard *keyboard,
 void singularity_input_share_cancel(void);
 bool singularity_input_share_drop(struct view *view);
 void singularity_input_share_drag_cancel(struct view *view);
+uint32_t singularity_input_share_capabilities(void);
 
 #endif /* LABWC_SINGULARITY_INPUT_SHARE_H */

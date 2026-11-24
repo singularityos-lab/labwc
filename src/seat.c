@@ -33,6 +33,7 @@
 #include "input/type-ahead.h"
 #include "input/key-state.h"
 #include "labwc.h"
+#include "protocols/singularity-input-share.h"
 #include "output.h"
 #include "session-lock.h"
 #include "view.h"
@@ -715,7 +716,7 @@ new_tablet_pad(struct seat *seat, struct wlr_input_device *dev)
 	return input;
 }
 
-static void
+void
 seat_update_capabilities(struct seat *seat)
 {
 	struct input *input = NULL;
@@ -737,6 +738,7 @@ seat_update_capabilities(struct seat *seat)
 			break;
 		}
 	}
+	caps |= singularity_input_share_capabilities();
 	wlr_seat_set_capabilities(seat->wlr_seat, caps);
 }
 

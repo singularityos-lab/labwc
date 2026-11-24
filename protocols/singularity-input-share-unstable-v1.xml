@@ -4,7 +4,7 @@
     Copyright © 2026 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_input_share_manager_v1" version="2">
+  <interface name="zsingularity_input_share_manager_v1" version="3">
     <description summary="hand the pointer and keyboard to another device">
       Lets a trusted client place other devices next to the edges of the
       outputs. When the pointer is pushed through such an edge the
@@ -47,9 +47,89 @@
       </description>
       <arg name="id" type="new_id" interface="zsingularity_input_share_probe_v1"/>
     </request>
+
+    <request name="get_window" since="3">
+      <description summary="drive one window from another device">
+        Names the toplevel of the given app, and of the given process when
+        pid is not zero, so that the client can show it on another device
+        and send it the input made there. Input sent through the returned
+        object reaches only that window, wherever the pointer of this seat
+        is. When no such window exists the object is closed at once.
+      </description>
+      <arg name="id" type="new_id" interface="zsingularity_input_share_window_v1"/>
+      <arg name="app_id" type="string"/>
+      <arg name="pid" type="int"/>
+    </request>
   </interface>
 
-  <interface name="zsingularity_input_share_probe_v1" version="2">
+  <interface name="zsingularity_input_share_window_v1" version="3">
+    <description summary="one window driven from another device">
+      Positions are in the pixels of the image of this window that the
+      ext-image-copy-capture protocol gives for its foreign toplevel
+      handle, so that a point on that image reaches the same point of the
+      window, popups included.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="stop driving the window">
+        Releases the buttons and keys still held through this object.
+      </description>
+    </request>
+
+    <request name="motion">
+      <arg name="x" type="fixed"/>
+      <arg name="y" type="fixed"/>
+    </request>
+
+    <request name="button">
+      <description summary="press or release a button">
+        Pressing a button also activates the window.
+      </description>
+      <arg name="button" type="uint"/>
+      <arg name="state" type="uint"/>
+    </request>
+
+    <request name="axis">
+      <arg name="axis" type="uint"/>
+      <arg name="steps" type="int"/>
+    </request>
+
+    <request name="key">
+      <description summary="press or release a key">
+        Key is a Linux input event code. Keys are read with the keymap of
+        this seat, and pressing one activates the window.
+      </description>
+      <arg name="key" type="uint"/>
+      <arg name="state" type="uint"/>
+    </request>
+
+    <event name="identifier">
+      <description summary="the foreign toplevel identifier of the window">
+        Sent once, before anything else, so that the client can capture
+        this window through its ext_foreign_toplevel_handle_v1.
+      </description>
+      <arg name="identifier" type="string"/>
+    </event>
+
+    <event name="geometry">
+      <description summary="where the window is in its image">
+        The part of the captured image that is the window itself, without
+        its shadows. Sent after identifier and again whenever it changes.
+      </description>
+      <arg name="x" type="int"/>
+      <arg name="y" type="int"/>
+      <arg name="width" type="int"/>
+      <arg name="height" type="int"/>
+    </event>
+
+    <event name="closed">
+      <description summary="the window is gone">
+        Requests made after this event are ignored.
+      </description>
+    </event>
+  </interface>
+
+  <interface name="zsingularity_input_share_probe_v1" version="3">
     <description summary="pushes against free output edges"/>
 
     <request name="destroy" type="destructor">
@@ -70,7 +150,7 @@
     </event>
   </interface>
 
-  <interface name="zsingularity_input_share_edge_v1" version="2">
+  <interface name="zsingularity_input_share_edge_v1" version="3">
     <description summary="a crossable stretch of an output edge"/>
 
     <request name="destroy" type="destructor">

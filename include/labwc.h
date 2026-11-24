@@ -440,6 +440,7 @@ void seat_finish(void);
 void seat_reconfigure(void);
 void seat_force_focus_surface(struct seat *seat, struct wlr_surface *surface);
 void seat_focus_surface(struct seat *seat, struct wlr_surface *surface);
+void seat_update_capabilities(struct seat *seat);
 
 void seat_pointer_end_grab(struct seat *seat, struct wlr_surface *surface);
 

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-only
 #include "protocols/singularity-input-share.h"
 #include <linux/input-event-codes.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -9,12 +10,19 @@
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_cursor.h>
 #include <wlr/types/wlr_keyboard.h>
+#include <wlr/types/wlr_keyboard_group.h>
+#include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
 #include <wlr/types/wlr_output_layout.h>
+#include <wlr/types/wlr_scene.h>
 #include <wlr/types/wlr_seat.h>
+#include <wlr/types/wlr_xdg_shell.h>
+#include <xkbcommon/xkbcommon.h>
 #include <wlr/util/log.h>
 #include "input/cursor.h"
 #include "input/keyboard.h"
+#include "common/macros.h"
 #include "common/mem.h"
+#include "foreign-toplevel/foreign.h"
 #include "labwc.h"
 #include "output.h"
 #include "session-lock.h"
@@ -33,6 +41,20 @@ struct share_edge {
 	struct wl_list link;
 };
 
+struct share_window {
+	struct wl_resource *resource;
+	struct view *view;
+	struct xkb_state *xkb;
+	double x, y;
+	uint32_t buttons[8];
+	int nbuttons;
+	uint32_t keys[32];
+	int nkeys;
+	struct wlr_box geometry;
+	struct wl_listener view_destroy;
+	struct wl_listener commit;
+};
+
 #define PUSH_DISTANCE 120.0
 #define PUSH_PAUSE_MSEC 400
 
@@ -48,6 +70,9 @@ static struct {
 		bool spent;
 	} push;
 	struct share_edge *active;
+	int windows;
+	struct share_window *holding;
+	struct wlr_seat_pointer_grab grab;
 	struct {
 		struct share_edge *edge;
 		struct view *view;
@@ -694,10 +719,480 @@ handle_get_probe(struct wl_client *wl_client, struct wl_resource *resource,
 	wl_list_insert(&share.probes, wl_resource_get_link(probe_resource));
 }
 
+static uint32_t
+now_msec(void)
+{
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+}
+
+uint32_t
+singularity_input_share_capabilities(void)
+{
+	return share.windows > 0
+		? WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD : 0;
+}
+
+static void window_hold(struct share_window *window, bool hold);
+
+static void
+window_close(struct share_window *window)
+{
+	if (!window->view) {
+		return;
+	}
+	window->view = NULL;
+	window_hold(window, false);
+	window->nbuttons = 0;
+	wl_list_remove(&window->view_destroy.link);
+	wl_list_init(&window->view_destroy.link);
+	wl_list_remove(&window->commit.link);
+	wl_list_init(&window->commit.link);
+	zsingularity_input_share_window_v1_send_closed(window->resource);
+}
+
+static void
+handle_window_view_destroy(struct wl_listener *listener, void *data)
+{
+	struct share_window *window =
+		wl_container_of(listener, window, view_destroy);
+	window_close(window);
+}
+
+static void
+extents(struct wlr_scene_node *node, int lx, int ly, int *x1, int *y1,
+		int *x2, int *y2)
+{
+	int w = 0, h = 0;
+	switch (node->type) {
+	case WLR_SCENE_NODE_TREE:;
+		struct wlr_scene_node *child;
+		wl_list_for_each(child, &wlr_scene_tree_from_node(node)->children, link) {
+			extents(child, lx + child->x, ly + child->y, x1, y1, x2, y2);
+		}
+		return;
+	case WLR_SCENE_NODE_RECT:
+		w = wlr_scene_rect_from_node(node)->width;
+		h = wlr_scene_rect_from_node(node)->height;
+		break;
+	case WLR_SCENE_NODE_BUFFER:;
+		struct wlr_scene_buffer *buffer = wlr_scene_buffer_from_node(node);
+		if (buffer->dst_width > 0 && buffer->dst_height > 0) {
+			w = buffer->dst_width;
+			h = buffer->dst_height;
+		} else if (buffer->buffer) {
+			w = buffer->buffer->width;
+			h = buffer->buffer->height;
+			if (buffer->transform & WL_OUTPUT_TRANSFORM_90) {
+				int t = w;
+				w = h;
+				h = t;
+			}
+		}
+		break;
+	}
+	*x1 = MIN(*x1, lx);
+	*y1 = MIN(*y1, ly);
+	*x2 = MAX(*x2, lx + w);
+	*y2 = MAX(*y2, ly + h);
+}
+
+static bool
+image_box(struct view *view, struct wlr_box *box)
+{
+	struct wlr_scene_node *root = &view->capture.scene->tree.node;
+	int lx = 0, ly = 0;
+	wlr_scene_node_coords(root, &lx, &ly);
+	int x1 = INT_MAX, y1 = INT_MAX, x2 = INT_MIN, y2 = INT_MIN;
+	extents(root, lx, ly, &x1, &y1, &x2, &y2);
+	if (x1 >= x2 || y1 >= y2) {
+		return false;
+	}
+	*box = (struct wlr_box){ x1, y1, x2 - x1, y2 - y1 };
+	return true;
+}
+
+static void
+window_geometry(struct share_window *window)
+{
+	struct wlr_box image;
+	if (!window->view || !image_box(window->view, &image)) {
+		return;
+	}
+	struct wlr_box g = {
+		.x = window->view->current.x, .y = window->view->current.y,
+		.width = window->view->current.width,
+		.height = window->view->current.height,
+	};
+	struct wlr_box content = { 0, 0, g.width, g.height };
+	struct wlr_xdg_surface *xdg =
+		wlr_xdg_surface_try_from_wlr_surface(window->view->surface);
+	if (xdg) {
+		content.x = xdg->geometry.x;
+		content.y = xdg->geometry.y;
+		content.width = xdg->geometry.width;
+		content.height = xdg->geometry.height;
+	}
+	struct wlr_box geometry = {
+		content.x - image.x, content.y - image.y,
+		content.width, content.height,
+	};
+	if (wlr_box_empty(&geometry)) {
+		geometry = (struct wlr_box){ 0, 0, image.width, image.height };
+	}
+	if (wlr_box_equal(&geometry, &window->geometry)) {
+		return;
+	}
+	window->geometry = geometry;
+	zsingularity_input_share_window_v1_send_geometry(window->resource,
+		geometry.x, geometry.y, geometry.width, geometry.height);
+}
+
+static void
+handle_window_commit(struct wl_listener *listener, void *data)
+{
+	struct share_window *window = wl_container_of(listener, window, commit);
+	window_geometry(window);
+}
+
+static struct wlr_surface *
+window_surface_at(struct share_window *window, double x, double y,
+		double *sx, double *sy)
+{
+	struct wlr_scene_node *root = &window->view->capture.scene->tree.node;
+	struct wlr_box image;
+	if (!image_box(window->view, &image)) {
+		return NULL;
+	}
+	int x1 = image.x, y1 = image.y;
+	struct wlr_scene_node *node = wlr_scene_node_at(root, x1 + x, y1 + y,
+		sx, sy);
+	if (!node || node->type != WLR_SCENE_NODE_BUFFER) {
+		return NULL;
+	}
+	struct wlr_scene_surface *surface = wlr_scene_surface_try_from_buffer(
+		wlr_scene_buffer_from_node(node));
+	return surface ? surface->surface : NULL;
+}
+
+static struct share_window *
+window_from(struct wl_resource *resource)
+{
+	struct share_window *window = wl_resource_get_user_data(resource);
+	return window && window->view ? window : NULL;
+}
+
+static void grab_enter(struct wlr_seat_pointer_grab *grab,
+		struct wlr_surface *surface, double sx, double sy) {}
+static void grab_clear_focus(struct wlr_seat_pointer_grab *grab) {}
+static void grab_motion(struct wlr_seat_pointer_grab *grab, uint32_t msec,
+		double sx, double sy) {}
+static uint32_t grab_button(struct wlr_seat_pointer_grab *grab, uint32_t msec,
+		uint32_t button, enum wl_pointer_button_state state) { return 0; }
+static void grab_axis(struct wlr_seat_pointer_grab *grab, uint32_t msec,
+		enum wl_pointer_axis orientation, double value, int32_t discrete,
+		enum wl_pointer_axis_source source,
+		enum wl_pointer_axis_relative_direction direction) {}
+static void grab_frame(struct wlr_seat_pointer_grab *grab) {}
+
+static void
+grab_cancel(struct wlr_seat_pointer_grab *grab)
+{
+	share.holding = NULL;
+}
+
+static const struct wlr_pointer_grab_interface grab_impl = {
+	.enter = grab_enter,
+	.clear_focus = grab_clear_focus,
+	.motion = grab_motion,
+	.button = grab_button,
+	.axis = grab_axis,
+	.frame = grab_frame,
+	.cancel = grab_cancel,
+};
+
+static void
+window_hold(struct share_window *window, bool hold)
+{
+	struct wlr_seat *seat = server.seat.wlr_seat;
+	if (hold && !share.holding) {
+		share.grab.interface = &grab_impl;
+		share.grab.data = window;
+		wlr_seat_pointer_start_grab(seat, &share.grab);
+		share.holding = window;
+	} else if (!hold && share.holding == window) {
+		share.holding = NULL;
+		if (seat->pointer_state.grab == &share.grab) {
+			wlr_seat_pointer_end_grab(seat);
+		}
+	}
+}
+
+static void
+window_pointer_at(struct share_window *window, uint32_t msec)
+{
+	struct wlr_seat *seat = server.seat.wlr_seat;
+	double sx, sy;
+	struct wlr_surface *surface =
+		window_surface_at(window, window->x, window->y, &sx, &sy);
+	if (!surface) {
+		return;
+	}
+	if (seat->pointer_state.focused_surface != surface) {
+		wlr_seat_pointer_enter(seat, surface, sx, sy);
+	}
+	wlr_seat_pointer_send_motion(seat, msec, sx, sy);
+}
+
+static void
+window_activate(struct share_window *window)
+{
+	if (server.seat.wlr_seat->keyboard_state.focused_surface
+			!= window->view->surface) {
+		desktop_focus_view(window->view, false);
+	}
+}
+
+static void
+handle_window_destroy(struct wl_client *wl_client, struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
+
+static void
+handle_window_motion(struct wl_client *wl_client, struct wl_resource *resource,
+		wl_fixed_t x, wl_fixed_t y)
+{
+	struct share_window *window = window_from(resource);
+	if (!window) {
+		return;
+	}
+	window_geometry(window);
+	window->x = wl_fixed_to_double(x);
+	window->y = wl_fixed_to_double(y);
+	window_pointer_at(window, now_msec());
+	wlr_seat_pointer_send_frame(server.seat.wlr_seat);
+}
+
+static bool
+held(uint32_t *list, int *n, int cap, uint32_t code, bool pressed)
+{
+	for (int i = 0; i < *n; i++) {
+		if (list[i] != code) {
+			continue;
+		}
+		if (!pressed) {
+			list[i] = list[--*n];
+		}
+		return !pressed;
+	}
+	if (!pressed || *n >= cap) {
+		return false;
+	}
+	list[(*n)++] = code;
+	return true;
+}
+
+static void
+handle_window_button(struct wl_client *wl_client, struct wl_resource *resource,
+		uint32_t button, uint32_t state)
+{
+	struct share_window *window = window_from(resource);
+	bool pressed = state == WL_POINTER_BUTTON_STATE_PRESSED;
+	if (!window || !held(window->buttons, &window->nbuttons, 8, button, pressed)) {
+		return;
+	}
+	uint32_t msec = now_msec();
+	if (pressed) {
+		window_activate(window);
+		window_hold(window, true);
+	}
+	window_pointer_at(window, msec);
+	wlr_seat_pointer_send_button(server.seat.wlr_seat, msec, button,
+		pressed ? WL_POINTER_BUTTON_STATE_PRESSED
+			: WL_POINTER_BUTTON_STATE_RELEASED);
+	wlr_seat_pointer_send_frame(server.seat.wlr_seat);
+	if (window->nbuttons == 0) {
+		window_hold(window, false);
+	}
+}
+
+static void
+handle_window_axis(struct wl_client *wl_client, struct wl_resource *resource,
+		uint32_t axis, int32_t steps)
+{
+	struct share_window *window = window_from(resource);
+	if (!window || axis > WL_POINTER_AXIS_HORIZONTAL_SCROLL || !steps) {
+		return;
+	}
+	uint32_t msec = now_msec();
+	window_pointer_at(window, msec);
+	wlr_seat_pointer_send_axis(server.seat.wlr_seat, msec, axis,
+		15.0 * steps, 120 * steps, WL_POINTER_AXIS_SOURCE_WHEEL,
+		WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL);
+	wlr_seat_pointer_send_frame(server.seat.wlr_seat);
+}
+
+static void
+window_modifiers(struct share_window *window)
+{
+	struct wlr_keyboard_modifiers mods = {
+		.depressed = xkb_state_serialize_mods(window->xkb, XKB_STATE_MODS_DEPRESSED),
+		.latched = xkb_state_serialize_mods(window->xkb, XKB_STATE_MODS_LATCHED),
+		.locked = xkb_state_serialize_mods(window->xkb, XKB_STATE_MODS_LOCKED),
+		.group = xkb_state_serialize_layout(window->xkb, XKB_STATE_LAYOUT_EFFECTIVE),
+	};
+	wlr_seat_keyboard_notify_modifiers(server.seat.wlr_seat, &mods);
+}
+
+static void
+handle_window_key(struct wl_client *wl_client, struct wl_resource *resource,
+		uint32_t key, uint32_t state)
+{
+	struct share_window *window = window_from(resource);
+	bool pressed = state == WL_KEYBOARD_KEY_STATE_PRESSED;
+	if (!window || !held(window->keys, &window->nkeys, 32, key, pressed)) {
+		return;
+	}
+	struct xkb_keymap *keymap = server.seat.keyboard_group->keyboard.keymap;
+	if (!keymap) {
+		return;
+	}
+	if (window->xkb && xkb_state_get_keymap(window->xkb) != keymap) {
+		xkb_state_unref(window->xkb);
+		window->xkb = NULL;
+	}
+	if (!window->xkb) {
+		window->xkb = xkb_state_new(keymap);
+		if (!window->xkb) {
+			return;
+		}
+	}
+	if (!wlr_seat_get_keyboard(server.seat.wlr_seat)) {
+		wlr_seat_set_keyboard(server.seat.wlr_seat,
+			&server.seat.keyboard_group->keyboard);
+	}
+	if (pressed) {
+		window_activate(window);
+	}
+	xkb_state_update_key(window->xkb, key + 8, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+	wlr_seat_keyboard_notify_key(server.seat.wlr_seat, now_msec(), key,
+		pressed ? WL_KEYBOARD_KEY_STATE_PRESSED
+			: WL_KEYBOARD_KEY_STATE_RELEASED);
+	window_modifiers(window);
+}
+
+static const struct zsingularity_input_share_window_v1_interface window_impl = {
+	.destroy = handle_window_destroy,
+	.motion = handle_window_motion,
+	.button = handle_window_button,
+	.axis = handle_window_axis,
+	.key = handle_window_key,
+};
+
+static void
+window_resource_destroy(struct wl_resource *resource)
+{
+	struct share_window *window = wl_resource_get_user_data(resource);
+	if (window->view) {
+		uint32_t msec = now_msec();
+		while (window->nbuttons > 0) {
+			wlr_seat_pointer_send_button(server.seat.wlr_seat, msec,
+				window->buttons[--window->nbuttons],
+				WL_POINTER_BUTTON_STATE_RELEASED);
+		}
+		wlr_seat_pointer_send_frame(server.seat.wlr_seat);
+		while (window->nkeys > 0) {
+			uint32_t key = window->keys[--window->nkeys];
+			if (window->xkb) {
+				xkb_state_update_key(window->xkb, key + 8, XKB_KEY_UP);
+			}
+			wlr_seat_keyboard_notify_key(server.seat.wlr_seat, msec, key,
+				WL_KEYBOARD_KEY_STATE_RELEASED);
+		}
+		if (window->xkb) {
+			window_modifiers(window);
+		}
+	}
+	window_hold(window, false);
+	wl_list_remove(&window->view_destroy.link);
+	wl_list_remove(&window->commit.link);
+	if (window->xkb) {
+		xkb_state_unref(window->xkb);
+	}
+	free(window);
+	if (--share.windows == 0) {
+		seat_update_capabilities(&server.seat);
+	}
+}
+
+static struct view *
+find_window(const char *app_id, int32_t pid)
+{
+	struct view *view;
+	wl_list_for_each(view, &server.views, link) {
+		if (!view->mapped || !view->surface || !view->surface->resource
+				|| !view->foreign_toplevel || !view->app_id
+				|| strcmp(view->app_id, app_id)) {
+			continue;
+		}
+		if (pid > 0) {
+			pid_t client_pid = 0;
+			wl_client_get_credentials(
+				wl_resource_get_client(view->surface->resource),
+				&client_pid, NULL, NULL);
+			if (client_pid != pid) {
+				continue;
+			}
+		}
+		return view;
+	}
+	return NULL;
+}
+
+static void
+handle_get_window(struct wl_client *wl_client, struct wl_resource *resource,
+		uint32_t id, const char *app_id, int32_t pid)
+{
+	struct wl_resource *window_resource = wl_resource_create(wl_client,
+		&zsingularity_input_share_window_v1_interface,
+		wl_resource_get_version(resource), id);
+	if (!window_resource) {
+		wl_client_post_no_memory(wl_client);
+		return;
+	}
+	struct share_window *window = znew(*window);
+	window->resource = window_resource;
+	wl_list_init(&window->view_destroy.link);
+	wl_list_init(&window->commit.link);
+	wl_resource_set_implementation(window_resource, &window_impl, window,
+		window_resource_destroy);
+	if (share.windows++ == 0) {
+		seat_update_capabilities(&server.seat);
+	}
+	struct view *view = find_window(app_id, pid);
+	struct wlr_ext_foreign_toplevel_handle_v1 *handle = view
+		? foreign_toplevel_get_ext_handle(view->foreign_toplevel) : NULL;
+	if (!handle || !handle->identifier) {
+		zsingularity_input_share_window_v1_send_closed(window_resource);
+		return;
+	}
+	window->view = view;
+	window->view_destroy.notify = handle_window_view_destroy;
+	wl_signal_add(&view->events.destroy, &window->view_destroy);
+	window->commit.notify = handle_window_commit;
+	wl_signal_add(&view->surface->events.commit, &window->commit);
+	zsingularity_input_share_window_v1_send_identifier(window_resource,
+		handle->identifier);
+	window_geometry(window);
+}
+
 static const struct zsingularity_input_share_manager_v1_interface manager_impl = {
 	.destroy = handle_manager_destroy,
 	.get_edge = handle_get_edge,
 	.get_probe = handle_get_probe,
+	.get_window = handle_get_window,
 };
 
 static void
@@ -719,6 +1214,6 @@ singularity_input_share_init(void)
 	wl_list_init(&share.edges);
 	wl_list_init(&share.probes);
 	share.global = wl_global_create(server.wl_display,
-		&zsingularity_input_share_manager_v1_interface, 2, NULL,
+		&zsingularity_input_share_manager_v1_interface, 3, NULL,
 		bind_manager);
 }
