@@ -8,7 +8,9 @@
 #include <wayland-server-core.h>
 #include <wlr/backend/wayland.h>
 #include <wlr/types/wlr_compositor.h>
+#include <unistd.h>
 #include <wlr/types/wlr_cursor.h>
+#include <wlr/types/wlr_data_device.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard_group.h>
 #include <wlr/types/wlr_ext_foreign_toplevel_list_v1.h>
@@ -1188,11 +1190,331 @@ handle_get_window(struct wl_client *wl_client, struct wl_resource *resource,
 	window_geometry(window);
 }
 
+struct share_drag {
+	struct wlr_data_source source;
+	struct wl_resource *resource;
+	bool started;
+	bool finished;
+};
+
+struct share_offer {
+	struct wl_resource *resource;
+	struct wlr_data_source *source;
+	struct wl_listener source_destroy;
+};
+
+static void
+hold_button(struct wlr_seat *seat, uint32_t button, uint32_t msec)
+{
+	struct wlr_seat_pointer_state *state = &seat->pointer_state;
+	for (size_t i = 0; i < state->button_count; i++) {
+		if (state->buttons[i].button == button) {
+			state->buttons[i].n_pressed++;
+			return;
+		}
+	}
+	if (state->button_count == WLR_POINTER_BUTTONS_CAP) {
+		return;
+	}
+	if (state->button_count == 0) {
+		state->grab_button = button;
+		state->grab_time = msec;
+	}
+	state->buttons[state->button_count++] = (struct wlr_seat_pointer_button){
+		.button = button,
+		.n_pressed = 1,
+	};
+}
+
+static void
+forget_button(struct wlr_seat *seat, uint32_t button)
+{
+	struct wlr_seat_pointer_state *state = &seat->pointer_state;
+	for (size_t i = 0; i < state->button_count; i++) {
+		if (state->buttons[i].button == button) {
+			state->buttons[i] = state->buttons[--state->button_count];
+			return;
+		}
+	}
+}
+
+static struct share_drag *
+drag_from_source(struct wlr_data_source *source)
+{
+	struct share_drag *drag = wl_container_of(source, drag, source);
+	return drag;
+}
+
+static void
+drag_source_send(struct wlr_data_source *source, const char *mime_type,
+		int32_t fd)
+{
+	struct share_drag *drag = drag_from_source(source);
+	if (drag->resource) {
+		zsingularity_input_share_drag_v1_send_send(drag->resource,
+			mime_type, fd);
+	}
+	close(fd);
+}
+
+static void
+drag_source_drop(struct wlr_data_source *source)
+{
+	struct share_drag *drag = drag_from_source(source);
+	if (drag->resource) {
+		zsingularity_input_share_drag_v1_send_dropped(drag->resource);
+	}
+}
+
+static void
+drag_source_finish(struct wlr_data_source *source)
+{
+	struct share_drag *drag = drag_from_source(source);
+	drag->finished = true;
+	if (drag->resource) {
+		zsingularity_input_share_drag_v1_send_finished(drag->resource);
+	}
+}
+
+static void
+drag_source_destroy(struct wlr_data_source *source)
+{
+	struct share_drag *drag = drag_from_source(source);
+	if (drag->resource) {
+		if (!drag->finished) {
+			zsingularity_input_share_drag_v1_send_cancelled(drag->resource);
+		}
+		wl_resource_set_user_data(drag->resource, NULL);
+	}
+	free(drag);
+}
+
+static const struct wlr_data_source_impl drag_source_impl = {
+	.send = drag_source_send,
+	.destroy = drag_source_destroy,
+	.dnd_drop = drag_source_drop,
+	.dnd_finish = drag_source_finish,
+};
+
+static void
+handle_drag_offer(struct wl_client *wl_client, struct wl_resource *resource,
+		const char *mime_type)
+{
+	struct share_drag *drag = wl_resource_get_user_data(resource);
+	if (!drag || drag->started) {
+		return;
+	}
+	char **slot = wl_array_add(&drag->source.mime_types, sizeof(*slot));
+	if (!slot) {
+		wl_client_post_no_memory(wl_client);
+		return;
+	}
+	*slot = xstrdup(mime_type);
+}
+
+static void
+handle_drag_start(struct wl_client *wl_client, struct wl_resource *resource)
+{
+	struct share_drag *drag = wl_resource_get_user_data(resource);
+	if (!drag || drag->started) {
+		return;
+	}
+	drag->started = true;
+	struct wlr_seat *seat = server.seat.wlr_seat;
+	struct wlr_seat_client *seat_client =
+		wlr_seat_client_for_wl_client(seat, wl_client);
+	if (seat->drag || !seat_client || share.active) {
+		wlr_data_source_destroy(&drag->source);
+		return;
+	}
+	struct wlr_drag *wlr_drag = wlr_drag_create(seat_client, &drag->source, NULL);
+	if (!wlr_drag) {
+		wlr_data_source_destroy(&drag->source);
+		wl_client_post_no_memory(wl_client);
+		return;
+	}
+	hold_button(seat, BTN_LEFT, now_msec());
+	wlr_seat_start_pointer_drag(seat, wlr_drag,
+		wl_display_next_serial(server.wl_display));
+	cursor_update_focus();
+}
+
+static void
+handle_drag_cancel(struct wl_client *wl_client, struct wl_resource *resource)
+{
+	struct share_drag *drag = wl_resource_get_user_data(resource);
+	if (!drag) {
+		return;
+	}
+	struct wlr_seat *seat = server.seat.wlr_seat;
+	if (seat->drag && seat->drag->source == &drag->source) {
+		forget_button(seat, seat->pointer_state.grab_button);
+	}
+	wlr_data_source_destroy(&drag->source);
+}
+
+static void
+handle_drag_destroy(struct wl_client *wl_client, struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
+
+static void
+drag_resource_destroy(struct wl_resource *resource)
+{
+	struct share_drag *drag = wl_resource_get_user_data(resource);
+	if (!drag) {
+		return;
+	}
+	drag->resource = NULL;
+	struct wlr_seat *seat = server.seat.wlr_seat;
+	if (seat->drag && seat->drag->source == &drag->source) {
+		forget_button(seat, seat->pointer_state.grab_button);
+		wlr_data_source_destroy(&drag->source);
+	} else if (!drag->started || seat->drag_source != &drag->source) {
+		wlr_data_source_destroy(&drag->source);
+	}
+}
+
+static const struct zsingularity_input_share_drag_v1_interface drag_impl = {
+	.destroy = handle_drag_destroy,
+	.offer = handle_drag_offer,
+	.start = handle_drag_start,
+	.cancel = handle_drag_cancel,
+};
+
+static void
+handle_create_drag(struct wl_client *wl_client, struct wl_resource *resource,
+		uint32_t id)
+{
+	struct wl_resource *drag_resource = wl_resource_create(wl_client,
+		&zsingularity_input_share_drag_v1_interface,
+		wl_resource_get_version(resource), id);
+	if (!drag_resource) {
+		wl_client_post_no_memory(wl_client);
+		return;
+	}
+	struct share_drag *drag = znew(*drag);
+	wlr_data_source_init(&drag->source, &drag_source_impl);
+	drag->source.actions = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+	drag->resource = drag_resource;
+	wl_resource_set_implementation(drag_resource, &drag_impl, drag,
+		drag_resource_destroy);
+}
+
+static void
+offer_forget(struct share_offer *offer)
+{
+	if (offer->source) {
+		wl_list_remove(&offer->source_destroy.link);
+		offer->source = NULL;
+	}
+}
+
+static void
+handle_offer_source_destroy(struct wl_listener *listener, void *data)
+{
+	struct share_offer *offer =
+		wl_container_of(listener, offer, source_destroy);
+	offer_forget(offer);
+}
+
+static void
+handle_offer_receive(struct wl_client *wl_client, struct wl_resource *resource,
+		const char *mime_type, int32_t fd)
+{
+	struct share_offer *offer = wl_resource_get_user_data(resource);
+	if (!offer || !offer->source) {
+		close(fd);
+		return;
+	}
+	wlr_data_source_send(offer->source, mime_type, fd);
+}
+
+static void
+handle_offer_finish(struct wl_client *wl_client, struct wl_resource *resource,
+		uint32_t outcome)
+{
+	struct share_offer *offer = wl_resource_get_user_data(resource);
+	struct wlr_seat *seat = server.seat.wlr_seat;
+	if (!offer || !offer->source || !seat->drag
+			|| seat->drag->source != offer->source) {
+		return;
+	}
+	struct wlr_data_source *source = offer->source;
+	offer_forget(offer);
+	forget_button(seat, seat->pointer_state.grab_button);
+	if (outcome == ZSINGULARITY_INPUT_SHARE_DRAG_OFFER_V1_OUTCOME_DROPPED
+			&& source->impl->dnd_drop && source->impl->dnd_finish) {
+		wlr_data_source_dnd_drop(source);
+		wlr_data_source_dnd_finish(source);
+		wlr_seat_pointer_end_grab(seat);
+	} else if (source->impl->dnd_finish) {
+		wlr_data_source_destroy(source);
+	} else {
+		wlr_seat_pointer_end_grab(seat);
+	}
+}
+
+static void
+handle_offer_destroy(struct wl_client *wl_client, struct wl_resource *resource)
+{
+	wl_resource_destroy(resource);
+}
+
+static void
+offer_resource_destroy(struct wl_resource *resource)
+{
+	struct share_offer *offer = wl_resource_get_user_data(resource);
+	if (!offer) {
+		return;
+	}
+	offer_forget(offer);
+	free(offer);
+}
+
+static const struct zsingularity_input_share_drag_offer_v1_interface offer_impl = {
+	.destroy = handle_offer_destroy,
+	.receive = handle_offer_receive,
+	.finish = handle_offer_finish,
+};
+
+static void
+handle_get_drag(struct wl_client *wl_client, struct wl_resource *resource,
+		uint32_t id)
+{
+	struct wl_resource *offer_resource = wl_resource_create(wl_client,
+		&zsingularity_input_share_drag_offer_v1_interface,
+		wl_resource_get_version(resource), id);
+	if (!offer_resource) {
+		wl_client_post_no_memory(wl_client);
+		return;
+	}
+	struct share_offer *offer = znew(*offer);
+	offer->resource = offer_resource;
+	wl_resource_set_implementation(offer_resource, &offer_impl, offer,
+		offer_resource_destroy);
+	struct wlr_drag *drag = server.seat.wlr_seat->drag;
+	if (drag && drag->source) {
+		offer->source = drag->source;
+		offer->source_destroy.notify = handle_offer_source_destroy;
+		wl_signal_add(&drag->source->events.destroy, &offer->source_destroy);
+		char **mime_type;
+		wl_array_for_each(mime_type, &drag->source->mime_types) {
+			zsingularity_input_share_drag_offer_v1_send_mime_type(
+				offer_resource, *mime_type);
+		}
+	}
+	zsingularity_input_share_drag_offer_v1_send_done(offer_resource);
+}
+
 static const struct zsingularity_input_share_manager_v1_interface manager_impl = {
 	.destroy = handle_manager_destroy,
 	.get_edge = handle_get_edge,
 	.get_probe = handle_get_probe,
 	.get_window = handle_get_window,
+	.get_drag = handle_get_drag,
+	.create_drag = handle_create_drag,
 };
 
 static void
@@ -1214,6 +1536,6 @@ singularity_input_share_init(void)
 	wl_list_init(&share.edges);
 	wl_list_init(&share.probes);
 	share.global = wl_global_create(server.wl_display,
-		&zsingularity_input_share_manager_v1_interface, 3, NULL,
+		&zsingularity_input_share_manager_v1_interface, 4, NULL,
 		bind_manager);
 }

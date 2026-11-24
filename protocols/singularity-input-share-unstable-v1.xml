@@ -4,7 +4,7 @@
     Copyright © 2026 Singularity Desktop
   </copyright>
 
-  <interface name="zsingularity_input_share_manager_v1" version="3">
+  <interface name="zsingularity_input_share_manager_v1" version="4">
     <description summary="hand the pointer and keyboard to another device">
       Lets a trusted client place other devices next to the edges of the
       outputs. When the pointer is pushed through such an edge the
@@ -60,9 +60,83 @@
       <arg name="app_id" type="string"/>
       <arg name="pid" type="int"/>
     </request>
+    <request name="get_drag" since="4">
+      <description summary="read the drag in progress">
+        Describes the drag and drop operation running on this seat when
+        the request arrives, so that its data can be carried to another
+        device. When nothing is being dragged the object only sends done.
+      </description>
+      <arg name="id" type="new_id" interface="zsingularity_input_share_drag_offer_v1"/>
+    </request>
+    <request name="create_drag" since="4">
+      <description summary="drag data that comes from another device"/>
+      <arg name="id" type="new_id" interface="zsingularity_input_share_drag_v1"/>
+    </request>
+  </interface>
+  <interface name="zsingularity_input_share_drag_offer_v1" version="4">
+    <description summary="the drag in progress on this seat"/>
+    <request name="destroy" type="destructor">
+      <description summary="forget the drag, leaving it running"/>
+    </request>
+    <request name="receive">
+      <description summary="read the dragged data in one format"/>
+      <arg name="mime_type" type="string"/>
+      <arg name="fd" type="fd"/>
+    </request>
+    <enum name="outcome">
+      <entry name="cancelled" value="0"/>
+      <entry name="dropped" value="1"/>
+    </enum>
+    <request name="finish">
+      <description summary="end the drag on behalf of another device">
+        Ends the drag that this object describes. Dropped tells the
+        dragging client that the data was taken elsewhere; cancelled tells
+        it that nothing took it. The button that started the drag is
+        considered released.
+      </description>
+      <arg name="outcome" type="uint" enum="outcome"/>
+    </request>
+    <event name="mime_type">
+      <arg name="mime_type" type="string"/>
+    </event>
+    <event name="done">
+      <description summary="all formats were sent"/>
+    </event>
+  </interface>
+  <interface name="zsingularity_input_share_drag_v1" version="4">
+    <description summary="a drag of data held by the client"/>
+    <request name="destroy" type="destructor">
+      <description summary="destroy the drag, cancelling it when running"/>
+    </request>
+    <request name="offer">
+      <arg name="mime_type" type="string"/>
+    </request>
+    <request name="start">
+      <description summary="start dragging under the pointer">
+        Starts a drag at the pointer as if its left button had been pressed
+        there. Releasing that button drops the data. When another drag is
+        already running the object is cancelled at once.
+      </description>
+    </request>
+    <request name="cancel">
+      <description summary="end the drag without dropping"/>
+    </request>
+    <event name="send">
+      <arg name="mime_type" type="string"/>
+      <arg name="fd" type="fd"/>
+    </event>
+    <event name="dropped">
+      <description summary="a surface accepted the drop"/>
+    </event>
+    <event name="finished">
+      <description summary="the surface that took the drop is done with it"/>
+    </event>
+    <event name="cancelled">
+      <description summary="the drag ended without a drop"/>
+    </event>
   </interface>
 
-  <interface name="zsingularity_input_share_window_v1" version="3">
+  <interface name="zsingularity_input_share_window_v1" version="4">
     <description summary="one window driven from another device">
       Positions are in the pixels of the image of this window that the
       ext-image-copy-capture protocol gives for its foreign toplevel
@@ -129,7 +203,7 @@
     </event>
   </interface>
 
-  <interface name="zsingularity_input_share_probe_v1" version="3">
+  <interface name="zsingularity_input_share_probe_v1" version="4">
     <description summary="pushes against free output edges"/>
 
     <request name="destroy" type="destructor">
@@ -150,7 +224,7 @@
     </event>
   </interface>
 
-  <interface name="zsingularity_input_share_edge_v1" version="3">
+  <interface name="zsingularity_input_share_edge_v1" version="4">
     <description summary="a crossable stretch of an output edge"/>
 
     <request name="destroy" type="destructor">
