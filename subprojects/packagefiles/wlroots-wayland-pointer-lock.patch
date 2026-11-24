@@ -120,6 +120,26 @@ index b61e32cd..2e560e1c 100644
  
  	seat->wl_pointer = NULL;
  	seat->active_pointer = NULL;
+diff --git a/include/backend/wayland.h b/include/backend/wayland.h
+index e24eb9fd..8d000fc1 100644
+--- a/include/backend/wayland.h
++++ b/include/backend/wayland.h
+@@ -45,6 +45,7 @@ struct wlr_wl_backend {
+ 	struct wp_linux_drm_syncobj_manager_v1 *drm_syncobj_manager_v1;
+ 	struct wl_list drm_syncobj_timelines; // wlr_wl_drm_syncobj_timeline.link
+ 	struct zwp_relative_pointer_manager_v1 *zwp_relative_pointer_manager_v1;
++	struct zwp_pointer_constraints_v1 *zwp_pointer_constraints_v1;
+ 	struct wl_list seats; // wlr_wl_seat.link
+ 	struct zwp_tablet_manager_v2 *tablet_manager;
+ 	struct wlr_drm_format_set shm_formats;
+@@ -172,6 +173,7 @@ struct wlr_wl_seat {
+ 	struct zwp_pointer_gesture_pinch_v1 *gesture_pinch;
+ 	struct zwp_pointer_gesture_hold_v1 *gesture_hold;
+ 	struct zwp_relative_pointer_v1 *relative_pointer;
++	struct zwp_locked_pointer_v1 *locked_pointer;
+ 
+ 	struct wl_touch *wl_touch;
+ 	struct wlr_touch wlr_touch;
 diff --git a/include/wlr/backend/wayland.h b/include/wlr/backend/wayland.h
 index c732de68..49a1dc5f 100644
 --- a/include/wlr/backend/wayland.h
