@@ -9,6 +9,7 @@ labwc_sources = files(
   'desktop.c',
   'dnd.c',
   'edges.c',
+  'frame-stats.c',
   'idle.c',
   'priority.c',
   'interactive.c',

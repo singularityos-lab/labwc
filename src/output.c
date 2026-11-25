@@ -39,6 +39,7 @@
 #include "common/scene-helpers.h"
 #include "common/string-helpers.h"
 #include "config/rcxml.h"
+#include "frame-stats.h"
 #include "labwc.h"
 #include "layers.h"
 #include "motion.h"
@@ -824,6 +825,7 @@ handle_new_output(struct wl_listener *listener, void *data)
 	wl_signal_add(&wlr_output->events.destroy, &output->destroy);
 	output->frame.notify = handle_output_frame;
 	wl_signal_add(&wlr_output->events.frame, &output->frame);
+	frame_stats_add_output(wlr_output);
 
 	output->request_state.notify = handle_output_request_state;
 	wl_signal_add(&wlr_output->events.request_state, &output->request_state);

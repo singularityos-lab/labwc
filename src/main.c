@@ -19,6 +19,7 @@
 #include "translate.h"
 #include "menu/menu.h"
 #include "priority.h"
+#include "frame-stats.h"
 
 /*
  * Globals
@@ -325,6 +326,7 @@ main(int argc, char *argv[])
 		server.title_fmt = "labwc - %o";
 	}
 
+	frame_stats_init();
 	server_init();
 	server_start();
 	priority_raise_main_thread();
@@ -345,6 +347,7 @@ main(int argc, char *argv[])
 	wl_display_run(server.wl_display);
 
 	session_shutdown();
+	frame_stats_finish();
 
 	menu_finish();
 	theme_finish(&theme);

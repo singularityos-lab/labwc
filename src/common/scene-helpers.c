@@ -8,6 +8,7 @@
 #include <scenefx/types/wlr_scene.h>
 #include <wlr/util/log.h>
 #include "color-filter.h"
+#include "frame-stats.h"
 #include "labwc.h"
 #include "common/mem.h"
 #include "magnifier.h"
@@ -150,6 +151,7 @@ lab_wlr_scene_output_commit(struct wlr_scene_output *scene_output,
 		return true;
 	}
 
+	int64_t frame_start = frame_stats_enabled() ? frame_stats_now() : 0;
 	struct wlr_scene_output_state_options options = {
 		.color_transform = output_color_transform(output),
 	};
@@ -200,6 +202,9 @@ lab_wlr_scene_output_commit(struct wlr_scene_output *scene_output,
 		return false;
 	}
 	render_watchdog(true);
+	if (frame_start) {
+		frame_stats_commit(wlr_output, frame_start);
+	}
 
 	if (!wlr_box_empty(&additional_damage)) {
 		pixman_region32_t region;
