@@ -12,6 +12,7 @@ labwc_sources = files(
   'frame-stats.c',
   'idle.c',
   'priority.c',
+  'service-notify.c',
   'interactive.c',
   'layers.c',
   'magnifier.c',

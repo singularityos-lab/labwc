@@ -19,6 +19,7 @@
 #include "translate.h"
 #include "menu/menu.h"
 #include "priority.h"
+#include "service-notify.h"
 #include "frame-stats.h"
 
 /*
@@ -343,6 +344,7 @@ main(int argc, char *argv[])
 		.startup_cmd = startup_cmd
 	};
 	wl_event_loop_add_idle(server.wl_event_loop, idle_callback, &idle_ctx);
+	service_notify_ready(server.wl_event_loop);
 
 	wl_display_run(server.wl_display);
 
