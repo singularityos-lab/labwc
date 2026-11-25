@@ -1,7 +1,7 @@
 [wrap-git]
 url = https://gitlab.freedesktop.org/wlroots/wlroots.git
 revision = 0.20
-diff_files = wlroots-six-hotplug.patch, wlroots-wayland-pointer-lock.patch
+diff_files = wlroots-six-hotplug.patch, wlroots-wayland-pointer-lock.patch, wlroots-layer-shell-bounds.patch
 
 [provide]
 dependency_names = wlroots-0.20
