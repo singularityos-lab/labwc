@@ -69,6 +69,7 @@ drm_full = dependency('libdrm', required: wlroots.get_variable('have_drm_backend
 drm = drm_full.partial_dependency(compile_args: true, includes: true)
 xml2 = dependency('libxml-2.0')
 glib = dependency('glib-2.0')
+gio = dependency('gio-2.0')
 cairo = dependency('cairo')
 pangocairo = dependency('pangocairo')
 input = dependency('libinput', version: '>=1.26', required: wlroots.get_variable('have_libinput_backend') == 'true')
@@ -175,6 +176,7 @@ labwc_deps = [
   xcb_icccm,
   xml2,
   glib,
+  gio,
   cairo,
   drm,
   pangocairo,

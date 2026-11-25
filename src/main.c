@@ -18,6 +18,7 @@
 #include "theme.h"
 #include "translate.h"
 #include "menu/menu.h"
+#include "priority.h"
 
 /*
  * Globals
@@ -326,6 +327,7 @@ main(int argc, char *argv[])
 
 	server_init();
 	server_start();
+	priority_raise_main_thread();
 
 	struct theme theme = { 0 };
 	theme_init(&theme, rc.theme_name);

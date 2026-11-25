@@ -10,6 +10,7 @@ labwc_sources = files(
   'dnd.c',
   'edges.c',
   'idle.c',
+  'priority.c',
   'interactive.c',
   'layers.c',
   'magnifier.c',
