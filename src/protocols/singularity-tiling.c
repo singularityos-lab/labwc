@@ -29,6 +29,13 @@ struct singularity_tiling_manager {
 
 static struct singularity_tiling_manager *tiling_manager;
 
+struct geometry_watcher {
+	struct wl_list link;
+	struct wl_resource *resource;
+};
+
+static struct wl_list geometry_watchers = { &geometry_watchers, &geometry_watchers };
+
 struct tiling_slide {
 	struct wl_list link;
 	struct view *view;
@@ -339,6 +346,22 @@ handle_snap_view(struct wl_client *client, struct wl_resource *resource,
 }
 
 static void
+send_geometry(struct wl_resource *resource, struct wl_resource *toplevel,
+	struct view *view)
+{
+	const char *output_name = "";
+	if (view->output && view->output->wlr_output
+			&& view->output->wlr_output->name) {
+		output_name = view->output->wlr_output->name;
+	}
+	zsingularity_tiling_manager_v1_send_geometry(resource, toplevel,
+		view->current.x, view->current.y,
+		view->current.width, view->current.height,
+		view->maximized ? 1u : 0u, view->fullscreen ? 1u : 0u,
+		output_name);
+}
+
+static void
 handle_get_geometry(struct wl_client *client, struct wl_resource *resource,
 	struct wl_resource *toplevel_resource)
 {
@@ -346,16 +369,81 @@ handle_get_geometry(struct wl_client *client, struct wl_resource *resource,
 	if (!view) {
 		return;
 	}
-	const char *output_name = "";
-	if (view->output && view->output->wlr_output
-			&& view->output->wlr_output->name) {
-		output_name = view->output->wlr_output->name;
+	send_geometry(resource, toplevel_resource, view);
+}
+
+static struct wl_resource *toplevel_resource_for_client(struct view *view,
+	struct wl_client *client);
+
+static struct geometry_watcher *
+geometry_watcher_find(struct wl_resource *resource)
+{
+	struct geometry_watcher *watcher;
+	wl_list_for_each(watcher, &geometry_watchers, link) {
+		if (watcher->resource == resource) {
+			return watcher;
+		}
 	}
-	zsingularity_tiling_manager_v1_send_geometry(resource, toplevel_resource,
-		view->current.x, view->current.y,
-		view->current.width, view->current.height,
-		view->maximized ? 1u : 0u, view->fullscreen ? 1u : 0u,
-		output_name);
+	return NULL;
+}
+
+static void
+handle_set_geometry_updates(struct wl_client *client,
+	struct wl_resource *resource, uint32_t enabled)
+{
+	struct geometry_watcher *watcher = geometry_watcher_find(resource);
+	if (!enabled) {
+		if (watcher) {
+			wl_list_remove(&watcher->link);
+			free(watcher);
+		}
+		return;
+	}
+	if (watcher) {
+		return;
+	}
+	watcher = znew(*watcher);
+	watcher->resource = resource;
+	wl_list_insert(&geometry_watchers, &watcher->link);
+	struct view *view;
+	wl_list_for_each(view, &server.views, link) {
+		if (!view->mapped) {
+			continue;
+		}
+		struct wl_resource *toplevel =
+			toplevel_resource_for_client(view, client);
+		if (toplevel) {
+			send_geometry(resource, toplevel, view);
+		}
+	}
+}
+
+void
+singularity_tiling_view_changed(struct view *view)
+{
+	if (!view || !view->mapped || wl_list_empty(&geometry_watchers)) {
+		return;
+	}
+	uint32_t state = (view->maximized ? 1u : 0u)
+		| (view->fullscreen ? 2u : 0u) | 4u;
+	struct wlr_output *output = view->output ? view->output->wlr_output : NULL;
+	if (state == view->singularity_geometry_state_sent
+			&& output == view->singularity_geometry_output_sent
+			&& wlr_box_equal(&view->current,
+				&view->singularity_geometry_sent)) {
+		return;
+	}
+	view->singularity_geometry_sent = view->current;
+	view->singularity_geometry_state_sent = state;
+	view->singularity_geometry_output_sent = output;
+	struct geometry_watcher *watcher;
+	wl_list_for_each(watcher, &geometry_watchers, link) {
+		struct wl_resource *toplevel = toplevel_resource_for_client(view,
+			wl_resource_get_client(watcher->resource));
+		if (toplevel) {
+			send_geometry(watcher->resource, toplevel, view);
+		}
+	}
 }
 
 static void
@@ -461,11 +549,17 @@ static const struct zsingularity_tiling_manager_v1_interface manager_impl = {
 	.get_layout_workarea = handle_get_layout_workarea,
 	.get_cursor_position = handle_get_cursor_position,
 	.set_geometry_animated = handle_set_geometry_animated,
+	.set_geometry_updates = handle_set_geometry_updates,
 };
 
 static void
 resource_destroy(struct wl_resource *resource)
 {
+	struct geometry_watcher *watcher = geometry_watcher_find(resource);
+	if (watcher) {
+		wl_list_remove(&watcher->link);
+		free(watcher);
+	}
 	wl_list_remove(wl_resource_get_link(resource));
 }
 
@@ -493,7 +587,7 @@ singularity_tiling_init(void)
 	}
 	wl_list_init(&tiling_manager->resources);
 	tiling_manager->global = wl_global_create(server.wl_display,
-		&zsingularity_tiling_manager_v1_interface, 11,
+		&zsingularity_tiling_manager_v1_interface, 12,
 		tiling_manager, bind_manager);
 }
 

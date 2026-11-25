@@ -206,6 +206,9 @@ struct view {
 	enum lab_ssd_mode singularity_tiling_ssd_mode;
 	bool singularity_tiling_ssd_mode_valid;
 	bool singularity_scrolling_tiled;
+	struct wlr_box singularity_geometry_sent;
+	uint32_t singularity_geometry_state_sent;
+	struct wlr_output *singularity_geometry_output_sent;
 	enum ssd_preference ssd_preference;
 	bool shaded;
 

@@ -29,5 +29,6 @@ void singularity_tiling_send_interaction(struct view *view,
 	enum singularity_tiling_interaction_phase phase,
 	enum singularity_tiling_interaction_kind kind,
 	const struct wlr_box *geometry, uint32_t edges);
+void singularity_tiling_view_changed(struct view *view);
 
 #endif /* LABWC_SINGULARITY_TILING_H */

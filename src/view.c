@@ -24,6 +24,7 @@
 #include "menu/menu.h"
 #include "output.h"
 #include "placement.h"
+#include "protocols/singularity-tiling.h"
 #include "regions.h"
 #include "resize-indicator.h"
 #include "session-lock.h"
@@ -611,6 +612,7 @@ view_moved(struct view *view)
 	if (rc.resize_indicator && server.grabbed_view == view) {
 		resize_indicator_update(view);
 	}
+	singularity_tiling_view_changed(view);
 }
 
 void
@@ -1409,6 +1411,7 @@ view_set_maximized(struct view *view, enum view_axis maximized)
 
 	view->maximized = maximized;
 	wl_signal_emit_mutable(&view->events.maximized, NULL);
+	singularity_tiling_view_changed(view);
 
 	/*
 	 * Ensure that follow-up actions like SnapToEdge / SnapToRegion
@@ -1797,6 +1800,7 @@ view_set_fullscreen(struct view *view, bool fullscreen)
 		view_apply_special_geometry(view);
 	}
 	output_set_has_fullscreen_view(view->output, view->fullscreen);
+	singularity_tiling_view_changed(view);
 	/*
 	 * Entering/leaving fullscreen might result in a different
 	 * scene node ending up under the cursor even if view_moved()
