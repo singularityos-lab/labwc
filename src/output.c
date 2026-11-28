@@ -295,11 +295,6 @@ handle_output_frame(struct wl_listener *listener, void *data)
 	}
 #endif
 
-	/*
-	 * Idle outputs must stay idle under a frame rate limit: holding a frame
-	 * re-arms it through wlr_output_schedule_frame(), which always marks the
-	 * output as needing a frame, so an empty commit would follow every hold.
-	 */
 	if (!wlr_scene_output_needs_frame(output->scene_output)
 			&& !output_wants_magnification(output)) {
 		struct timespec now = { 0 };

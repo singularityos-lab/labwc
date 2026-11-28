@@ -63,14 +63,11 @@ index 8574a05..e3d2320 100644
  
 --- a/include/scenefx/render/fx_renderer/fx_offscreen_buffers.h
 +++ b/include/scenefx/render/fx_renderer/fx_offscreen_buffers.h
-@@ -24,8 +24,15 @@
+@@ -24,8 +24,12 @@
  	struct fx_framebuffer *effects_buffer;
  	// Swap buffer used for effects
  	struct fx_framebuffer *effects_buffer_swapped;
 +
-+	// Output size at which allocating the buffers last failed. Allocation is
-+	// not retried at this size, so a renderer that cannot allocate offscreen
-+	// buffers does not retry and log on every frame.
 +	int failed_width;
 +	int failed_height;
  };
