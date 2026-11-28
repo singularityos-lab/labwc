@@ -367,6 +367,12 @@ predicted_frame_time(struct output *output)
 	return predicted;
 }
 
+bool
+motion_active(void)
+{
+	return !wl_list_empty(&tickers);
+}
+
 void
 motion_output_frame(struct output *output)
 {

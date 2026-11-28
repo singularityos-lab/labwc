@@ -296,7 +296,9 @@ handle_output_frame(struct wl_listener *listener, void *data)
 #endif
 
 	if (!wlr_scene_output_needs_frame(output->scene_output)
-			&& !output_wants_magnification(output)) {
+			&& !output_wants_magnification(output)
+			&& !motion_active()
+			&& !singularity_splash_pending()) {
 		struct timespec now = { 0 };
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		wlr_scene_output_send_frame_done(output->scene_output, &now);

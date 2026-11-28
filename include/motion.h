@@ -117,6 +117,7 @@ double motion_rubber_band_slope(double resisted, double extent);
 void motion_ticker_add(struct motion_ticker *ticker);
 void motion_ticker_remove(struct motion_ticker *ticker);
 void motion_output_frame(struct output *output);
+bool motion_active(void);
 
 void motion_timed_start(struct motion_timed *timed, enum motion_kind kind);
 void motion_timed_start_custom(struct motion_timed *timed, enum motion_kind kind,

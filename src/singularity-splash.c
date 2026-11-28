@@ -430,6 +430,12 @@ new_tree(void)
 	bar_count = 0;
 }
 
+bool
+singularity_splash_pending(void)
+{
+	return !splash_dismissed && !splash_shown;
+}
+
 void
 singularity_splash_maybe_show(struct output *output)
 {
