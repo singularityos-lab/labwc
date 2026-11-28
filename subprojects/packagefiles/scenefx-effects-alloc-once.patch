@@ -1,0 +1,81 @@
+diff --git a/render/fx_renderer/fx_offscreen_buffers.c b/render/fx_renderer/fx_offscreen_buffers.c
+index 8574a05..e3d2320 100644
+--- a/render/fx_renderer/fx_offscreen_buffers.c
++++ b/render/fx_renderer/fx_offscreen_buffers.c
+@@ -7,10 +7,7 @@
+ #include "scenefx/render/fx_renderer/fx_renderer.h"
+ #include "scenefx/render/fx_renderer/fx_offscreen_buffers.h"
+ 
+-static void addon_handle_destroy(struct wlr_addon *addon) {
+-	struct fx_offscreen_buffers *fbos = wl_container_of(addon, fbos, addon);
+-
+-	// Make sure to free the buffers
++void fx_offscreen_buffers_release(struct fx_offscreen_buffers *fbos) {
+ 	if (fbos->optimized_blur_buffer != NULL) {
+ 		wlr_buffer_drop(fbos->optimized_blur_buffer->buffer);
+ 		fbos->optimized_blur_buffer = NULL;
+@@ -31,7 +28,12 @@ static void addon_handle_destroy(struct wlr_addon *addon) {
+ 		wlr_buffer_drop(fbos->effects_buffer_swapped->buffer);
+ 		fbos->effects_buffer_swapped = NULL;
+ 	}
++}
++
++static void addon_handle_destroy(struct wlr_addon *addon) {
++	struct fx_offscreen_buffers *fbos = wl_container_of(addon, fbos, addon);
+ 
++	fx_offscreen_buffers_release(fbos);
+ 	wl_list_remove(&fbos->link);
+ 	wlr_addon_finish(&fbos->addon);
+ 	free(fbos);
+--- a/render/fx_renderer/fx_pass.c
++++ b/render/fx_renderer/fx_pass.c
+@@ -71,6 +71,11 @@
+ 	struct fx_renderer *renderer = pass->buffer->renderer;
+ 	const int width = pass->buffer->buffer->width;
+ 	const int height = pass->buffer->buffer->height;
++	struct fx_offscreen_buffers *fbos = pass->fx_offscreen_buffers;
++	if (fbos->failed_width == width && fbos->failed_height == height) {
++		pass->fx_offscreen_buffers = NULL;
++		return false;
++	}
+ 	struct wlr_allocator *allocator = renderer->offscreen_allocator ?
+ 		renderer->offscreen_allocator : output->allocator;
+ 	bool failed = false;
+@@ -89,11 +94,17 @@
+ 	fx_framebuffer_bind(pass->buffer);
+ 
+ 	if (failed) {
+-		fx_offscreen_buffers_destroy(pass->fx_offscreen_buffers);
++		fx_offscreen_buffers_release(fbos);
++		fbos->failed_width = width;
++		fbos->failed_height = height;
+ 		pass->fx_offscreen_buffers = NULL;
+-		wlr_log(WLR_ERROR, "Failed to create effect framebuffers");
++		wlr_log(WLR_ERROR, "Failed to create effect framebuffers for %s at %dx%d, "
++				"effects stay off until the output size changes",
++				output->name, width, height);
+ 		return false;
+ 	}
++	fbos->failed_width = 0;
++	fbos->failed_height = 0;
+ 	return true;
+ }
+ 
+--- a/include/scenefx/render/fx_renderer/fx_offscreen_buffers.h
++++ b/include/scenefx/render/fx_renderer/fx_offscreen_buffers.h
+@@ -24,8 +24,15 @@
+ 	struct fx_framebuffer *effects_buffer;
+ 	// Swap buffer used for effects
+ 	struct fx_framebuffer *effects_buffer_swapped;
++
++	// Output size at which allocating the buffers last failed. Allocation is
++	// not retried at this size, so a renderer that cannot allocate offscreen
++	// buffers does not retry and log on every frame.
++	int failed_width;
++	int failed_height;
+ };
+ 
++void fx_offscreen_buffers_release(struct fx_offscreen_buffers *fbos);
+ void fx_offscreen_buffers_destroy(struct fx_offscreen_buffers *fbos);
+ struct fx_offscreen_buffers *fx_offscreen_buffers_try_get(struct wlr_output *output);
+ 
