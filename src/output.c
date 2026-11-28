@@ -8,6 +8,7 @@
 
 #define _POSIX_C_SOURCE 200809L
 #include "output.h"
+#include "magnifier.h"
 #include "singularity-splash.h"
 #include <assert.h>
 #include <stdlib.h>
@@ -293,6 +294,20 @@ handle_output_frame(struct wl_listener *listener, void *data)
 		return;
 	}
 #endif
+
+	/*
+	 * Idle outputs must stay idle under a frame rate limit: holding a frame
+	 * re-arms it through wlr_output_schedule_frame(), which always marks the
+	 * output as needing a frame, so an empty commit would follow every hold.
+	 */
+	if (!wlr_scene_output_needs_frame(output->scene_output)
+			&& !output_wants_magnification(output)) {
+		struct timespec now = { 0 };
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		wlr_scene_output_send_frame_done(output->scene_output, &now);
+		singularity_pip_send_frame_done(output, &now);
+		return;
+	}
 
 	if (singularity_pacing_hold(output)) {
 		return;
